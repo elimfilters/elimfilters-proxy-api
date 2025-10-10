@@ -1,0 +1,25 @@
+{
+  "name": "elimfilters-proxy-api",
+  "version": "1.0.0",
+  "description": "Proxy API para ELIMFILTERS - Gestiona comunicación entre frontend y n8n",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [
+    "elimfilters",
+    "proxy",
+    "api",
+    "n8n"
+  ],
+  "author": "ELIMFILTERS",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "node-fetch": "^2.7.0"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
