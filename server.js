@@ -1,10 +1,19 @@
 import express from "express";
 import fetch from "node-fetch";
+import cors from 'cors'; // <-- LÍNEA AÑADIDA 1: Importamos cors
 
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// --- NUEVA RUTA AÑADIDA ---
+// <-- LÍNEA AÑADIDA 2: Configuramos y usamos cors
+// Esto permite que tu página web (www.elimfilters.com) pueda hacer peticiones a esta API
+const corsOptions = {
+  origin: 'https://www.elimfilters.com', // Tu dominio de producción
+  optionsSuccessStatus: 200
+};
+app.use(cors(corsOptions));
+// ----------------------------------------------------
+
 // Endpoint principal para dar la bienvenida y explicar el uso de la API
 app.get("/", (req, res) => {
   res.status(200).json({
@@ -18,7 +27,6 @@ app.get("/", (req, res) => {
 app.get("/search", async (req, res) => {
   const { q, lang } = req.query;
 
-  // Validación simple para asegurar que se proporcionen los parámetros
   if (!q || !lang) {
     return res.status(400).json({
       ok: false,
@@ -30,7 +38,6 @@ app.get("/search", async (req, res) => {
     const webhookURL = `https://elimfilterscross.app.n8n.cloud/webhook/ELIMFILTERS_SEARCH_MASTER?q=${encodeURIComponent(q)}&lang=${encodeURIComponent(lang)}`;
     const response = await fetch(webhookURL);
     
-    // Manejo de errores si el webhook no responde correctamente
     if (!response.ok) {
       throw new Error(`External webhook responded with status: ${response.status}`);
     }
@@ -53,4 +60,3 @@ app.get("/search", async (req, res) => {
 app.listen(PORT, () => {
   console.log(`ELIMFILTERS Proxy API running on port ${PORT}`);
 });
-// ready for deploy
