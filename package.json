@@ -1,4 +1,5 @@
 {
+  "type": "module",
   "name": "elimfilters-proxy-api",
   "version": "1.0.0",
   "description": "Proxy API para ELIMFILTERS - Gestiona comunicación entre frontend y n8n",
