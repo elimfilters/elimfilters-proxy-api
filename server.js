@@ -1,20 +1,18 @@
 import express from "express";
 import fetch from "node-fetch";
-import cors from 'cors'; // <-- LÍNEA AÑADIDA 1: Importamos cors
+import cors from 'cors';
 
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// <-- LÍNEA AÑADIDA 2: Configuramos y usamos cors
-// Esto permite que tu página web (www.elimfilters.com) pueda hacer peticiones a esta API
+// Configuración de CORS para permitir peticiones desde tu dominio
 const corsOptions = {
-  origin: 'https://www.elimfilters.com', // Tu dominio de producción
+  origin: 'https://www.elimfilters.com',
   optionsSuccessStatus: 200
 };
 app.use(cors(corsOptions));
-// ----------------------------------------------------
 
-// Endpoint principal para dar la bienvenida y explicar el uso de la API
+// Endpoint principal para dar la bienvenida
 app.get("/", (req, res) => {
   res.status(200).json({
     message: "Welcome to the ELIMFILTERS Proxy API",
@@ -50,6 +48,8 @@ app.get("/search", async (req, res) => {
       results: data
     });
   } catch (error) {
+    // ✅ ESTA ES LA FORMA CORRECTA: Usamos res.json() para enviar un objeto.
+    // Express se encarga de convertirlo a un string JSON válido.
     res.status(500).json({
       ok: false,
       error: error.message,
