@@ -5,14 +5,16 @@ import cors from 'cors';
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// Configuración de CORS para permitir peticiones desde tu dominio
+// <-- LÍNEA AÑADIDA 2: Configuramos y usamos cors
+// Esto permite que tu página web (www.elimfilters.com) pueda hacer peticiones a esta API
 const corsOptions = {
-  origin: 'https://www.elimfilters.com',
+  origin: 'https://www.elimfilters.com', // Tu dominio de producción
   optionsSuccessStatus: 200
 };
 app.use(cors(corsOptions));
+// ----------------------------------------------------
 
-// Endpoint principal para dar la bienvenida
+// Endpoint principal para dar la bienvenida y explicar el uso de la API
 app.get("/", (req, res) => {
   res.status(200).json({
     message: "Welcome to the ELIMFILTERS Proxy API",
@@ -33,7 +35,8 @@ app.get("/search", async (req, res) => {
   }
 
   try {
-    const webhookURL = `https://elimfilterscross.app.n8n.cloud/webhook/ELIMFILTERS_SEARCH_MASTER?q=${encodeURIComponent(q)}&lang=${encodeURIComponent(lang)}`;
+    // <-- LÍNEA CORREGIDA AQUÍ
+    const webhookURL = `https://elimfilterscross.app.n8n.cloud/webhook/ELIMFILTERS_SEARCH_MASTER?query=${encodeURIComponent(q)}&lang=${encodeURIComponent(lang)}`;
     const response = await fetch(webhookURL);
     
     if (!response.ok) {
@@ -48,8 +51,6 @@ app.get("/search", async (req, res) => {
       results: data
     });
   } catch (error) {
-    // ✅ ESTA ES LA FORMA CORRECTA: Usamos res.json() para enviar un objeto.
-    // Express se encarga de convertirlo a un string JSON válido.
     res.status(500).json({
       ok: false,
       error: error.message,
