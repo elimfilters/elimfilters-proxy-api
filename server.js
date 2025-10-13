@@ -43,7 +43,7 @@ app.get("/search", async (req, res) => {
     const webhookURL = `https://elimfilterscross.app.n8n.cloud/webhook/ELIMFILTERS_SEARCH_MASTER?query=${encodeURIComponent(q)}&lang=${encodeURIComponent(lang)}`;
     
     // <-- LÍNEA AÑADIDA: Log para saber qué URL se está llamando
-    console.log(`Llamando al webhook externo: ${webhookURL}`);
+    console.log(`[INFO] Llamando al webhook externo: ${webhookURL}`);
     // ----------------------------------------------------
     
     const response = await fetch(webhookURL);
@@ -52,12 +52,13 @@ app.get("/search", async (req, res) => {
       // <-- LÍNEA MODIFICADA: Leer el cuerpo del error para más detalles
       const errorBody = await response.text();
       const errorMessage = `External webhook responded with status: ${response.status}. Body: ${errorBody}`;
-      console.error(errorMessage); // <-- LÍNEA AÑADIDA: Log del error en el servidor
+      console.error(`[ERROR] Fallo en el webhook externo: ${errorMessage}`); // <-- LÍNEA AÑADIDA: Log del error en el servidor
       throw new Error(errorMessage);
       // ----------------------------------------------------
     }
 
     const data = await response.json();
+    console.log(`[INFO] Respuesta exitosa del webhook.`); // <-- LÍNEA AÑADIDA: Log de éxito
 
     res.status(200).json({
       ok: true,
@@ -66,16 +67,16 @@ app.get("/search", async (req, res) => {
     });
   } catch (error) {
     // <-- LÍNEA MODIFICADA: Log del error en el servidor para depuración
-    console.error("Error en el endpoint /search:", error);
+    console.error(`[ERROR] Error en el endpoint /search: ${error.message}`);
     // ----------------------------------------------------
     
     res.status(500).json({
       ok: false,
-      error: error.message,
+      error: "An internal error occurred. Please try again later.", // Mensaje genérico para el cliente
     });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`ELIMFILTERS Proxy API running on port ${PORT}`);
+  console.log(`[SUCCESS] ELIMFILTERS Proxy API running on port ${PORT}`);
 });
