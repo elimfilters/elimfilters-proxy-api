@@ -1,3 +1,7 @@
+// <-- LÍNEA AÑADIDA: Log de inicio para confirmar que la aplicación arranca
+console.log("=== INICIANDO APLICACIÓN ELIMFILTERS PROXY API ===");
+// --------------------------------------------------------------
+
 import express from "express";
 import fetch from "node-fetch";
 import cors from 'cors';
@@ -7,6 +11,7 @@ const PORT = process.env.PORT || 8080;
 
 // <-- LÍNEA AÑADIDA 2: Configuramos y usamos cors
 // Esto permite que tu página web (www.elimfilters.com) pueda hacer peticiones a esta API
+// NOTA: Para desarrollo local, podrías cambiarlo a: origin: ['http://localhost:3000', 'https://www.elimfilters.com']
 const corsOptions = {
   origin: 'https://www.elimfilters.com', // Tu dominio de producción
   optionsSuccessStatus: 200
@@ -35,12 +40,21 @@ app.get("/search", async (req, res) => {
   }
 
   try {
-    // <-- LÍNEA CORREGIDA AQUÍ
     const webhookURL = `https://elimfilterscross.app.n8n.cloud/webhook/ELIMFILTERS_SEARCH_MASTER?query=${encodeURIComponent(q)}&lang=${encodeURIComponent(lang)}`;
+    
+    // <-- LÍNEA AÑADIDA: Log para saber qué URL se está llamando
+    console.log(`Llamando al webhook externo: ${webhookURL}`);
+    // ----------------------------------------------------
+    
     const response = await fetch(webhookURL);
     
     if (!response.ok) {
-      throw new Error(`External webhook responded with status: ${response.status}`);
+      // <-- LÍNEA MODIFICADA: Leer el cuerpo del error para más detalles
+      const errorBody = await response.text();
+      const errorMessage = `External webhook responded with status: ${response.status}. Body: ${errorBody}`;
+      console.error(errorMessage); // <-- LÍNEA AÑADIDA: Log del error en el servidor
+      throw new Error(errorMessage);
+      // ----------------------------------------------------
     }
 
     const data = await response.json();
@@ -51,6 +65,10 @@ app.get("/search", async (req, res) => {
       results: data
     });
   } catch (error) {
+    // <-- LÍNEA MODIFICADA: Log del error en el servidor para depuración
+    console.error("Error en el endpoint /search:", error);
+    // ----------------------------------------------------
+    
     res.status(500).json({
       ok: false,
       error: error.message,
