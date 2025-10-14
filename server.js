@@ -1,82 +1,93 @@
-// <-- LÍNEA AÑADIDA: Log de inicio para confirmar que la aplicación arranca
-console.log("=== INICIANDO APLICACIÓN ELIMFILTERS PROXY API ===");
-// --------------------------------------------------------------
-
-import express from "express";
-import fetch from "node-fetch";
-import cors from 'cors';
-
+const express = require('express');
 const app = express();
-const PORT = process.env.PORT || 8080;
+const rateLimit = require('express-rate-limit'); // Para la defensa anti-scraping (Capa 2)
 
-// <-- LÍNEA AÑADIDA 2: Configuramos y usamos cors
-// Esto permite que tu página web (www.elimfilters.com) pueda hacer peticiones a esta API
-// NOTA: Para desarrollo local, podrías cambiarlo a: origin: ['http://localhost:3000', 'https://www.elimfilters.com']
-const corsOptions = {
-  origin: 'https://www.elimfilters.com', // Tu dominio de producción
-  optionsSuccessStatus: 200
-};
-app.use(cors(corsOptions));
-// ----------------------------------------------------
+// --- 1. Importar la lógica central y las utilidades (Deben crearse en archivos separados) ---
+const { processFilterCode } = require('./filterProcessor'); 
+const { logWebhookActivity, sendCriticalAlert } = require('./utils'); 
+const { authenticateWebhook, ipWhitelist } = require('./security'); // NODO 7
 
-// Endpoint principal para dar la bienvenida y explicar el uso de la API
-app.get("/", (req, res) => {
-  res.status(200).json({
-    message: "Welcome to the ELIMFILTERS Proxy API",
-    status: "active",
-    usage: "Use the /search endpoint with query parameters 'q' and 'lang'. Example: /search?q=test&lang=en"
-  });
-});
+// --- CONFIGURACIÓN Y MIDDLEWARE ---
+const PORT = process.env.PORT || 3000;
+const ALERT_EMAIL = "elimfilters@gmail.com"; 
 
-// Endpoint público para búsqueda
-app.get("/search", async (req, res) => {
-  const { q, lang } = req.query;
+app.use(express.json()); // Middleware para parsear el body JSON
 
-  if (!q || !lang) {
-    return res.status(400).json({
-      ok: false,
-      error: "Missing required query parameters: 'q' and 'lang'",
-    });
-  }
-
-  try {
-    const webhookURL = `https://elimfilterscross.app.n8n.cloud/webhook/ELIMFILTERS_SEARCH_MASTER?query=${encodeURIComponent(q)}&lang=${encodeURIComponent(lang)}`;
-    
-    // <-- LÍNEA AÑADIDA: Log para saber qué URL se está llamando
-    console.log(`[INFO] Llamando al webhook externo: ${webhookURL}`);
-    // ----------------------------------------------------
-    
-    const response = await fetch(webhookURL);
-    
-    if (!response.ok) {
-      // <-- LÍNEA MODIFICADA: Leer el cuerpo del error para más detalles
-      const errorBody = await response.text();
-      const errorMessage = `External webhook responded with status: ${response.status}. Body: ${errorBody}`;
-      console.error(`[ERROR] Fallo en el webhook externo: ${errorMessage}`); // <-- LÍNEA AÑADIDA: Log del error en el servidor
-      throw new Error(errorMessage);
-      // ----------------------------------------------------
+// --- DEFENSA CAPA 2: RATE LIMITING (Controla la velocidad del tráfico) ---
+// Configuración de ejemplo: 100 peticiones en 15 minutos por IP
+const apiLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, 
+    max: 100, 
+    standardHeaders: true, 
+    legacyHeaders: false,
+    message: {
+        error: "RATE_LIMIT_EXCEEDED",
+        message: "Demasiadas solicitudes. Intente de nuevo en 15 minutos."
     }
-
-    const data = await response.json();
-    console.log(`[INFO] Respuesta exitosa del webhook.`); // <-- LÍNEA AÑADIDA: Log de éxito
-
-    res.status(200).json({
-      ok: true,
-      source: "elimfilters-proxy-api",
-      results: data
-    });
-  } catch (error) {
-    // <-- LÍNEA MODIFICADA: Log del error en el servidor para depuración
-    console.error(`[ERROR] Error en el endpoint /search: ${error.message}`);
-    // ----------------------------------------------------
-    
-    res.status(500).json({
-      ok: false,
-      error: "An internal error occurred. Please try again later.", // Mensaje genérico para el cliente
-    });
-  }
 });
 
+
+// --- NODO 1: WEBHOOK ENDPOINT & NODO 6: RESPUESTA BLINDADA ---
+app.post(
+    '/webhook/filter-query', 
+    ipWhitelist,         // [CAPA 3: Seguridad] Solo IPs permitidas (si aplica)
+    authenticateWebhook, // [CAPA 1: Seguridad] Verifica la API Key
+    apiLimiter,          // [CAPA 2: Anti-Scraping] Limita la velocidad
+    async (req, res) => {
+        const startTime = Date.now();
+        const inputCode = req.body.code;
+        let finalStatus = 500;
+        
+        try {
+            // --- Nodos 2 al 5 se ejecutan dentro de filterProcessor.js ---
+            const result = await processFilterCode(inputCode, req.body.options); 
+            
+            // Si el resultado interno es OK (incluye CACHED y NEW)
+            if (result && result.results && result.results[0].ok) {
+                finalStatus = 200;
+                res.status(finalStatus).json(result);
+            } else {
+                // Captura fallos lógicos (INVALID_CODE del NODO 2/3)
+                finalStatus = 400;
+                res.status(finalStatus).json(result);
+            }
+
+        } catch (error) {
+            // --- CAPTURA DE ERRORES CRÍTICOS (NODO 6 Blindaje) ---
+            console.error(`[NODO 6] ERROR FATAL al procesar ${inputCode}:`, error);
+
+            // 1. DISPARAR ALERTA (NODO 7)
+            await sendCriticalAlert(
+                ALERT_EMAIL, 
+                `[ALERTA CRÍTICA] Fallo de Servidor/Datos para ${inputCode}`, 
+                `Error: ${error.message}. Revisar logs en Railway y ErrorLog Sheet.`
+            );
+            
+            // 2. RESPUESTA SEGURA Y GENÉRICA (Blindaje)
+            finalStatus = 500;
+            const safeResponse = error.safeErrorResponse || { 
+                results: [{ 
+                    error: "INTERNAL_SERVER_ERROR", 
+                    message: "Error de servidor. El catálogo no pudo ser procesado temporalmente.", 
+                    query_norm: inputCode || "N/A", 
+                    ok: false 
+                }] 
+            };
+            res.status(finalStatus).json(safeResponse);
+
+        } finally {
+            // --- REGISTRO DE ACTIVIDAD (NODO 7: Logging) ---
+            // logWebhookActivity(req, finalStatus, startTime); 
+            // Esto usa la respuesta real (result o safeResponse)
+        }
+    }
+);
+
+// --- INICIO DEL SERVIDOR ---
 app.listen(PORT, () => {
-  console.log(`[SUCCESS] ELIMFILTERS Proxy API running on port ${PORT}`);
+    console.log(`✅ Webhook activo en puerto ${PORT}`);
+    console.log(`🔑 API Key requerida via 'x-api-key'`);
 });
+
+// Nota: Debes crear los archivos 'filterProcessor.js', 'security.js', y 'utils.js' 
+// e instalar 'express-rate-limit'.
