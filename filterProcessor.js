@@ -1,35 +1,38 @@
-// filterProcessor.js (Lógica Interna - Limpieza)
+// filterProcessor.js (Orquestador Interno)
 
-// Importaciones
-const { readFromCache, writeToMasterAndCache, logToErrorSheet } = require('./dataAccess'); // Ahora son funciones seguras
-const { findExactHomologation } = require('./homologationDB');
-const { getElimfiltersPrefix, determineDutyLevel, applyBaseCodeLogic } = require('./businessLogic');
-const { buildFilterResponse } = require('./jsonBuilder'); 
-// ... (Otras importaciones)
+import { readFromCache, writeToMasterAndCache } from './dataAccess.js';
+import { findExactHomologation } from './homologationDB.js';
+import { getElimfiltersPrefix, determineDutyLevel, applyBaseCodeLogic } from './businessLogic.js';
+import { buildFilterResponse } from './jsonBuilder.js'; 
 
-// NODO 2: VALIDACIÓN & CACHÉ CHECK
+// NODO 2: VALIDACIÓN & CACHÉ CHECK (Simplificado para el arranque)
 async function validateAndCheckCache(inputCode) {
-    // ... (Lógica de normalización y validación de longitud)
-    // ...
+    let normalizedCode = String(inputCode || '').toUpperCase().trim().replace(/[\s\-/]/g, '');
+
+    if (normalizedCode.length < 4) {
+        return { valid: false, error: "CÓDIGO INVÁLIDO. Por favor, ingrese un código válido OEM o Cross Reference...", normalized: normalizedCode };
+    }
     
-    // NODO 4.5 LECTURA: Intenta la Ruta Rápida (Ahora siempre devuelve null)
+    // NODO 4.5 LECTURA
     const cachedData = await readFromCache(normalizedCode); 
 
     if (cachedData) {
-        // ...
+        return { valid: true, status: "CACHED", normalized: normalizedCode, cachedData };
     }
 
     return { valid: true, status: "NEW", normalized: normalizedCode };
 }
 
 
-// LÓGICA DE PROCESAMIENTO CENTRAL (Nodos 2 al 5)
-async function processFilterCode(inputCode, options = {}) {
+// LÓGICA DE PROCESAMIENTO CENTRAL
+export async function processFilterCode(inputCode, options = {}) {
     
     const validationResult = await validateAndCheckCache(inputCode);
     const normalized = validationResult.normalized;
 
-    // ... (Manejo de errores 400 - INVALID_CODE)
+    if (!validationResult.valid) {
+        throw { status: 400, safeErrorResponse: { results: [{ error: "INVALID_CODE", message: validationResult.error, query_norm: normalized, ok: false }] } };
+    }
 
     if (validationResult.status === "CACHED") {
         return buildFilterResponse(validationResult.cachedData); 
@@ -37,20 +40,35 @@ async function processFilterCode(inputCode, options = {}) {
 
     // NODO 3: BÚSQUEDA ESTRICTA
     const { found, rawData } = await findExactHomologation(normalized);
-    // ... (Manejo de error 400 - NO ENCONTRADO)
+    
+    if (!found) {
+        throw { status: 400, safeErrorResponse: { results: [{ error: "INVALID_CODE", message: "CÓDIGO INVÁLIDO O NO ENCONTRADO...", query_norm: normalized, ok: false }] } };
+    }
 
     // NODO 4: CLASIFICACIÓN Y SKU
-    // ... (Lógica de determinación HD/LD y generación de SKU)
+    const family = rawData.filter_family;
+    const duty = determineDutyLevel(family, rawData.specs, rawData.oem_codes, rawData.cross_reference); 
     
+    // Si la lógica HD/LD no tiene certeza, lanza un error 500
+    if (duty === 'UNKNOWN') {
+        throw { errorCode: "DATA_UNCERTAINTY", message: "Clasificación Duty (HD/LD) falló por ambigüedad.", status: 500 };
+    }
+    
+    const baseCodeResult = applyBaseCodeLogic(duty, family, rawData.oem_codes, rawData.cross_reference);
+    const prefix = getElimfiltersPrefix(family);
+    const finalSku = prefix + baseCodeResult.baseCode;
+
     const processedData = {
-        // ... (Datos procesados)
+        queryNorm: normalized,
+        sku: finalSku,
+        duty: duty,
+        filterType: family,
+        // ... (resto de datos)
     };
 
-    // NODO 4.5: PERSISTENCIA (Escritura - Ahora es una llamada segura que hace logging)
+    // NODO 4.5: PERSISTENCIA (Escritura segura)
     await writeToMasterAndCache(processedData);
 
     // NODO 5: GENERACIÓN DE RESPUESTA JSON
     return buildFilterResponse(processedData); 
 }
-
-module.exports = { processFilterCode };
