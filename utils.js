@@ -1,10 +1,4 @@
-// utils.js
-
-// Funciones de Nodemailer aquí. Asumimos que los detalles de nodemailer ya se configuraron.
-
-export function logWebhookActivity(req, statusCode, startTime, resultOrError) {
-    // ... (lógica de logging)
-}// utils.js (Utilidades - CommonJS)
+// utils.js (Utilidades - CommonJS)
 /**
  * Funciones auxiliares para logging, alertas y monitoreo
  */
@@ -422,7 +416,3 @@ module.exports = {
     LOG_LEVELS,
     LOG_DIR
 };
-
-export async function sendCriticalAlert(to, subject, body) {
-    // ... (lógica de envío de email)
-}
