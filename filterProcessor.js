@@ -1,9 +1,8 @@
 // filterProcessor.js (Orquestador Interno - Flujo Completo Corregido)
-import { readFromCache, writeToMasterAndCache } from './dataAccess.js';
-import { findExactHomologation } from './homologationDB.js';
-import { determineDutyLevel, validateMasterDataIntegrity, processFilterData } from './businessLogic.js';
-import { getElimfiltersPrefix, applyBaseCodeLogic } from './businessLogic.js';
-import { buildFilterResponse } from './jsonBuilder.js';
+const dataAccess = require('./dataAccess');
+const homologationDB = require('./homologationDB');
+const businessLogic = require('./businessLogic');
+const jsonBuilder = require('./jsonBuilder');
 
 /**
  * NODO 2: Validación y Normalización de entrada
@@ -45,7 +44,7 @@ async function validateAndCheckCache(inputCode) {
 
     // NODO 4.5: Intento de lectura de caché
     try {
-        const cachedData = await readFromCache(normalizedCode);
+        const cachedData = await dataAccess.readFromCache(normalizedCode);
         if (cachedData) {
             console.log(`[NODO 2] ✓ Cache hit para ${normalizedCode}`);
             return {
@@ -71,7 +70,7 @@ async function validateAndCheckCache(inputCode) {
  */
 async function findAndValidateMasterData(normalizedCode) {
     try {
-        const { found, rawData } = await findExactHomologation(normalizedCode);
+        const { found, rawData } = await homologationDB.findExactHomologation(normalizedCode);
 
         if (!found || !rawData) {
             throw new Error("Código no encontrado en base de datos maestra");
@@ -79,7 +78,7 @@ async function findAndValidateMasterData(normalizedCode) {
 
         // Validar integridad de data maestra
         try {
-            validateMasterDataIntegrity(rawData);
+            businessLogic.validateMasterDataIntegrity(rawData);
         } catch (integrityError) {
             console.error(`[NODO 3] Data maestra corrupta para ${normalizedCode}:`, integrityError.message);
             throw integrityError;
@@ -110,7 +109,7 @@ async function findAndValidateMasterData(normalizedCode) {
 function generateFinalSku(rawData, normalizedCode) {
     try {
         // Obtener duty level (ya validado en data maestra)
-        const duty = determineDutyLevel(
+        const duty = businessLogic.determineDutyLevel(
             rawData.filter_family,
             rawData.specs,
             rawData.oem_codes,
@@ -124,7 +123,7 @@ function generateFinalSku(rawData, normalizedCode) {
 
         // Obtener base code
         const baseCodeTarget = rawData.priority_reference ||
-            applyBaseCodeLogic(duty, rawData.filter_family, rawData.oem_codes, rawData.cross_reference);
+            businessLogic.applyBaseCodeLogic(duty, rawData.filter_family, rawData.oem_codes, rawData.cross_reference);
 
         if (!baseCodeTarget) {
             throw new Error("Base code logic retornó valor vacío");
@@ -139,7 +138,7 @@ function generateFinalSku(rawData, normalizedCode) {
         const baseCode = numericCode.slice(-4);
 
         // Obtener prefijo
-        const prefix = getElimfiltersPrefix(rawData.filter_family);
+        const prefix = businessLogic.getElimfiltersPrefix(rawData.filter_family);
         if (!prefix) {
             throw new Error(`Prefijo vacío para familia: ${rawData.filter_family}`);
         }
@@ -175,7 +174,7 @@ function generateFinalSku(rawData, normalizedCode) {
  */
 async function persistProcessedData(processedData, normalizedCode) {
     try {
-        await writeToMasterAndCache(processedData);
+        await dataAccess.writeToMasterAndCache(processedData);
         console.log(`[NODO 4.5] ✓ Datos persistidos para ${normalizedCode}`);
         return true;
     } catch (persistError) {
@@ -191,7 +190,7 @@ async function persistProcessedData(processedData, normalizedCode) {
  */
 function buildResponse(processedData) {
     try {
-        const response = buildFilterResponse(processedData);
+        const response = jsonBuilder.buildFilterResponse(processedData);
         console.log(`[NODO 5] ✓ Respuesta JSON construida`);
         return response;
     } catch (error) {
@@ -212,7 +211,7 @@ function buildResponse(processedData) {
 /**
  * FUNCIÓN PRINCIPAL: Orquesta todo el flujo
  */
-export async function processFilterCode(inputCode, options = {}) {
+async function processFilterCode(inputCode, options = {}) {
     console.log(`[INICIO] Procesando código: ${inputCode}`);
 
     try {
@@ -272,7 +271,8 @@ export async function processFilterCode(inputCode, options = {}) {
                 message: "Error interno al procesar el código.",
                 details: error.message,
                 ok: false
-            }]
+            }],
+            metadata: { success: false }
         };
     }
 }
@@ -280,7 +280,7 @@ export async function processFilterCode(inputCode, options = {}) {
 /**
  * Función auxiliar para testing
  */
-export async function testProcessor(testCode) {
+async function testProcessor(testCode) {
     console.log(`\n[TEST] Iniciando test con código: ${testCode}`);
     try {
         const result = await processFilterCode(testCode);
@@ -291,3 +291,12 @@ export async function testProcessor(testCode) {
         throw error;
     }
 }
+
+// ============================================================================
+// EXPORTACIONES (CommonJS)
+// ============================================================================
+
+module.exports = {
+    processFilterCode,
+    testProcessor
+};
