@@ -4,14 +4,22 @@
   "description": "API for ELIMFILTERS part search",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test"
   },
-  // ELIMINAR ESTA LÍNEA SI EXISTE: "type": "module",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {
     "express": "^4.18.2",
     "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
     "express-rate-limit": "^7.1.5",
-    "google-spreadsheet": "^4.1.1" 
-    // ... otras dependencias
+    "google-auth-library": "^9.4.1",
+    "googleapis": "^118.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
   }
 }
