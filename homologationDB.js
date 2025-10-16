@@ -160,7 +160,7 @@ function validateMasterRecord(record, designId) {
  * NODO 3: Función de Búsqueda Estricta
  * Retorna la data maestra completa y validada
  */
-export async function findExactHomologation(normalizedCode) {
+async function findExactHomologation(normalizedCode) {
     console.log(`[NODO 3] Buscando homologación para: ${normalizedCode}`);
     
     // Validar entrada
@@ -255,7 +255,7 @@ export async function findExactHomologation(normalizedCode) {
 /**
  * Obtener todos los códigos que apuntan a un diseño
  */
-export function getCodesForDesign(designId) {
+function getCodesForDesign(designId) {
     return Object.entries(REFERENCE_INDEX)
         .filter(([_, id]) => id === designId)
         .map(([code, _]) => code);
@@ -264,7 +264,7 @@ export function getCodesForDesign(designId) {
 /**
  * Listar todos los diseños activos
  */
-export function listActiveDesigns() {
+function listActiveDesigns() {
     return Object.entries(MASTER_DESIGN_DATA)
         .filter(([_, data]) => data.is_active)
         .map(([id, data]) => ({
@@ -278,7 +278,7 @@ export function listActiveDesigns() {
 /**
  * Validar que el índice sea consistente con los datos maestros
  */
-export function validateDatabaseIntegrity() {
+function validateDatabaseIntegrity() {
     console.log("[DB] Validando integridad de base de datos...");
     const errors = [];
     
@@ -311,3 +311,13 @@ export function validateDatabaseIntegrity() {
 
 // Validar integridad al cargar el módulo
 validateDatabaseIntegrity();
+
+// ============================================================================
+// EXPORTACIONES (CommonJS)
+// ============================================================================
+
+module.exports = {
+    findExactHomologation,
+    getCodesForDesign,
+    listActiveDesigns,
+    validateDatabaseIntegrity
