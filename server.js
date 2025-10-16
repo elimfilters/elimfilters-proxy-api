@@ -8,15 +8,10 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 app.use(cors());
 
-// Middleware para validar API Key
+// Middleware para validar API Key (DESACTIVADO TEMPORALMENTE)
 const validateApiKey = (req, res, next) => {
-    const apiKey = req.headers['x-api-key'];
-    const validKey = process.env.WEBHOOK_API_KEY || 'ZJ1q-M3t4l-F1lt3r-S3cr3t';
-    
-    if (apiKey !== validKey) {
-        return res.status(401).json({ error: 'Unauthorized: Invalid API Key' });
-    }
-    next();
+    // console.log('API Key recibida:', req.headers['x-api-key']);
+    next(); // Por ahora, saltamos la validación
 };
 
 // Endpoint de prueba
