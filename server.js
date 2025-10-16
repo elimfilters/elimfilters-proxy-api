@@ -7,8 +7,8 @@ const rateLimit = require('express-rate-limit');
 
 // Importar módulos locales (sin .js)
 const filterProcessor = require('./filterProcessor');
-const { validateWebhookAuth, ipWhitelist } = require('./security');
-const { logWebhookActivity, sanitizeError } = require('./utils');
+const security = require('./security');
+const utils = require('./utils');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -60,7 +60,7 @@ app.use('/webhook/', (req, res, next) => {
         // Validar IP si whitelist está activo
         if (process.env.ENABLE_IP_WHITELIST === 'true') {
             const clientIp = req.ip || req.connection.remoteAddress;
-            if (!ipWhitelist.includes(clientIp)) {
+            if (!security.validateIpWhitelist(clientIp)) {
                 console.warn(`[SECURITY] IP no autorizada: ${clientIp}`);
                 return res.status(403).json({
                     error: 'FORBIDDEN',
@@ -71,7 +71,7 @@ app.use('/webhook/', (req, res, next) => {
 
         // Validar API key
         const apiKey = req.headers['x-api-key'];
-        if (!validateWebhookAuth(apiKey)) {
+        if (!security.validateWebhookAuth(apiKey)) {
             console.warn(`[SECURITY] API key inválida o ausente`);
             return res.status(401).json({
                 error: 'UNAUTHORIZED',
@@ -159,7 +159,7 @@ app.post('/webhook/filter-query', async (req, res) => {
         console.log(`[${requestId}] ✓ Éxito en ${duration}ms`);
 
         // Registrar actividad
-        await logWebhookActivity({
+        await utils.logWebhookActivity({
             requestId,
             sku,
             status: 'SUCCESS',
@@ -177,11 +177,11 @@ app.post('/webhook/filter-query', async (req, res) => {
         console.error(`[${requestId}] Stack:`, error.stack);
 
         // Registro de error
-        await logWebhookActivity({
+        await utils.logWebhookActivity({
             requestId,
             sku: req.body?.sku || 'UNKNOWN',
             status: 'ERROR',
-            error: sanitizeError(error),
+            error: utils.sanitizeError(error),
             duration,
             timestamp: new Date().toISOString()
         });
