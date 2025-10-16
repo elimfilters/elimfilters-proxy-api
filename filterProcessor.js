@@ -1,4 +1,4 @@
-// filterProcessor.js (Orquestador Interno - Final)
+// filterProcessor.js (Orquestador Interno - Final para Arranque)
 
 import { readFromCache, writeToMasterAndCache } from './dataAccess.js';
 import { findExactHomologation } from './homologationDB.js';
@@ -12,7 +12,7 @@ async function validateAndCheckCache(inputCode) {
         return { valid: false, error: "CÓDIGO INVÁLIDO. Por favor, ingrese un código válido OEM o Cross Reference...", normalized: normalizedCode };
     }
     
-    // NODO 4.5 LECTURA (Desactivado temporalmente)
+    // NODO 4.5 LECTURA (Desactivado para el arranque)
     const cachedData = await readFromCache(normalizedCode); 
 
     if (cachedData) {
@@ -22,7 +22,7 @@ async function validateAndCheckCache(inputCode) {
     return { valid: true, status: "NEW", normalized: normalizedCode };
 }
 
-// LÓGICA DE PROCESAMIENTO CENTRAL (Exportación Correcta)
+// LÓGICA DE PROCESAMIENTO CENTRAL (Exportación correcta)
 export async function processFilterCode(inputCode, options = {}) {
     
     const validationResult = await validateAndCheckCache(inputCode);
@@ -36,7 +36,7 @@ export async function processFilterCode(inputCode, options = {}) {
         return buildFilterResponse(validationResult.cachedData); 
     }
 
-    // NODO 3: BÚSQUEDA ESTRICTA (Se asume que devuelve la prioridad correcta)
+    // NODO 3: BÚSQUEDA ESTRICTA
     const { found, rawData } = await findExactHomologation(normalized);
     
     if (!found) {
