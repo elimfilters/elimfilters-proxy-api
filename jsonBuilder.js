@@ -70,7 +70,7 @@ function buildCrossRefList(crossReference) {
  * FUNCIÓN PRINCIPAL: Construir respuesta JSON completa
  * Estructura de 27 campos para compatibilidad con sistema
  */
-export function buildFilterResponse(processedData) {
+function buildFilterResponse(processedData) {
     console.log(`[NODO 5] Iniciando construcción de respuesta para SKU: ${processedData.sku}`);
     
     try {
@@ -176,7 +176,7 @@ export function buildFilterResponse(processedData) {
 /**
  * FUNCIÓN AUXILIAR: Construir respuesta de error
  */
-export function buildErrorResponse(code, errorMessage, details = {}) {
+function buildErrorResponse(code, errorMessage, details = {}) {
     console.error(`[ERROR] ${errorMessage}`);
     
     return {
@@ -198,7 +198,7 @@ export function buildErrorResponse(code, errorMessage, details = {}) {
 /**
  * FUNCIÓN AUXILIAR: Construir respuesta vacía (no encontrado)
  */
-export function buildNotFoundResponse(code) {
+function buildNotFoundResponse(code) {
     return buildErrorResponse(
         code,
         'NOT_FOUND',
@@ -212,7 +212,7 @@ export function buildNotFoundResponse(code) {
 /**
  * FUNCIÓN AUXILIAR: Construir respuesta de validación fallida
  */
-export function buildValidationErrorResponse(code, validationErrors) {
+function buildValidationErrorResponse(code, validationErrors) {
     return buildErrorResponse(
         code,
         'VALIDATION_ERROR',
@@ -226,7 +226,7 @@ export function buildValidationErrorResponse(code, validationErrors) {
 /**
  * FUNCIÓN AUXILIAR: Validar estructura de respuesta
  */
-export function validateResponseStructure(response) {
+function validateResponseStructure(response) {
     const requiredTopLevel = ['results', 'metadata'];
     const missingTopLevel = requiredTopLevel.filter(field => !(field in response));
     
@@ -265,7 +265,7 @@ export function validateResponseStructure(response) {
 /**
  * FUNCIÓN DE TESTING
  */
-export function testResponseBuilder() {
+function testResponseBuilder() {
     console.log("\n[TEST] Probando buildFilterResponse...\n");
     
     const mockData = {
@@ -304,3 +304,16 @@ export function testResponseBuilder() {
         throw error;
     }
 }
+
+// ============================================================================
+// EXPORTACIONES (CommonJS)
+// ============================================================================
+
+module.exports = {
+    buildFilterResponse,
+    buildErrorResponse,
+    buildNotFoundResponse,
+    buildValidationErrorResponse,
+    validateResponseStructure,
+    testResponseBuilder
+};
