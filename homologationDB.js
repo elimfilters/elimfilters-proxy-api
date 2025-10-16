@@ -1,94 +1,313 @@
-// homologationDB.js
-
+// homologationDB.js (Base de Datos de Homologación - Fuente de Verdad)
 /**
- * ESTA TABLA SIMULA EL ÍNDICE DE BÚSQUEDA RÁPIDA:
- * Mapea CUALQUIER código de entrada (LF3620, 33166) a un ID de diseño maestro.
+ * TABLA 1: ÍNDICE DE BÚSQUEDA RÁPIDA
+ * Mapea CUALQUIER código de entrada (LF3620, 33166) a un ID de diseño maestro único.
+ * Esta tabla es el punto de entrada para normalizar referencias heterogéneas.
  */
 const REFERENCE_INDEX = {
     // Código WIX 33166 y sus homólogos apuntan al Master Design D-F003
     "33166": "D-F003-FUEL",
     "FF5507": "D-F003-FUEL",
-    "P556245": "D-F003-FUEL", // El código Donaldson también apunta al mismo diseño
+    "P556245": "D-F003-FUEL",
     
-    // Ejemplo de un filtro de aceite para asegurar el blindaje
+    // Ejemplo de un filtro de aceite
     "LF3000": "D-F001-OIL",
-    "P552100": "D-F001-OIL"
+    "P552100": "D-F001-OIL",
+    "51515": "D-F001-OIL",
+    "1R0739": "D-F001-OIL"
 };
 
-
 /**
- * ESTA TABLA CONTIENE EL REGISTRO MAESTRO DE ESPECIFICACIONES (La Fuente de la Verdad).
+ * TABLA 2: REGISTRO MAESTRO DE ESPECIFICACIONES (La Fuente de la Verdad)
  * La clave es el ID de diseño físico único.
+ * CRÍTICO: Todos los campos requeridos deben estar presentes.
  */
 const MASTER_DESIGN_DATA = {
-    // Diseño 1: Filtro de Aceite (Ejemplo de LF3000 / P552100)
+    // Diseño 1: Filtro de Aceite HD
     "D-F001-OIL": {
+        // Identificadores
+        design_id: "D-F001-OIL",
+        master_name: "Filtro de Aceite Donaldson - Serie 1",
+        
+        // Clasificación (LA FUENTE DE VERDAD PARA DUTY_LEVEL)
         filter_family: "ACEITE",
-        duty_level: "HD",
-        priority_reference: "P552100", // La referencia que el NODO 4 DEBE usar para el SKU
-        priority_brand: "DONALDSON",
+        duty_level: "HD",  // ✓ OBLIGATORIO - NO SE ADIVINA
+        
+        // Referencias de prioridad (para generación de SKU)
+        priority_reference: "P552100",  // Referencia principal para SKU
+        priority_brand: "DONALDSON",    // Marca de prioridad
+        
+        // Todas las referencias cruzadas
         all_cross_references: ["LF3000", "51515", "P552100", "1R0739"],
+        
+        // Código OEM (si aplica)
+        oem_codes: ["1R0739", "51515"],
+        
+        // Especificaciones técnicas
         specs: {
             "Height (mm)": "142",
             "Outer Diameter (mm)": "93.5",
-            "Thread Size": "1-14 NPSM", // Parámetro Crítico
-            "Micron Rating": "20-25", // Parámetro Crítico
+            "Thread Size": "1-14 NPSM",
+            "Micron Rating": "20-25",
             "Dirt Capacity (g)": "28",
-            "Bypass Valve (PSI)": "11-14"
-        }
+            "Bypass Valve (PSI)": "11-14",
+            "Spin-on": true,
+            "Material": "Paper/Glass Fiber"
+        },
+        
+        // Metadata
+        created_at: "2024-01-01T00:00:00Z",
+        last_updated: "2024-10-16T00:00:00Z",
+        is_active: true,
+        version: 1
     },
     
-    // Diseño 2: Filtro de Combustible (Ejemplo de WIX 33166 / P556245)
+    // Diseño 2: Filtro de Combustible HD
     "D-F003-FUEL": {
+        // Identificadores
+        design_id: "D-F003-FUEL",
+        master_name: "Filtro de Combustible Donaldson - Serie 3",
+        
+        // Clasificación (LA FUENTE DE VERDAD PARA DUTY_LEVEL)
         filter_family: "COMBUSTIBLE",
-        duty_level: "HD",
-        priority_reference: "P556245", // LA CLAVE: El NODO 4 usará '6245' para el SKU
+        duty_level: "HD",  // ✓ OBLIGATORIO - NO SE ADIVINA
+        
+        // Referencias de prioridad (para generación de SKU)
+        priority_reference: "P556245",  // LA CLAVE: El NODO 4 usará '6245' para el SKU
         priority_brand: "DONALDSON",
+        
+        // Todas las referencias cruzadas
         all_cross_references: ["33166", "FF5507", "P556245"],
+        
+        // Código OEM (si aplica)
+        oem_codes: ["33166"],
+        
+        // Especificaciones técnicas
         specs: {
             "Height (mm)": "177",
             "Outer Diameter (mm)": "93",
-            "Thread Size": "M16 x 1.5", // Parámetro Crítico
+            "Thread Size": "M16 x 1.5",
             "Micron Rating": "10",
             "Hydrostatic Burst Minimum (psi)": "200",
-            "Rated Flow (CFM or m3/min)": null
-        }
+            "Collapse Differential (psi)": "25",
+            "Flow Rating (LPM)": "150",
+            "Spin-on": true,
+            "Material": "Synthetic Fiber"
+        },
+        
+        // Metadata
+        created_at: "2024-01-01T00:00:00Z",
+        last_updated: "2024-10-16T00:00:00Z",
+        is_active: true,
+        version: 1
     }
 };
 
+/**
+ * VALIDADOR: Verifica integridad de un registro maestro
+ */
+function validateMasterRecord(record, designId) {
+    const requiredFields = [
+        'design_id',
+        'master_name',
+        'filter_family',
+        'duty_level',
+        'priority_reference',
+        'priority_brand',
+        'all_cross_references',
+        'specs',
+        'is_active'
+    ];
+    
+    const missingFields = requiredFields.filter(field => 
+        !record[field] || 
+        (typeof record[field] === 'string' && record[field].trim() === '')
+    );
+    
+    if (missingFields.length > 0) {
+        throw new Error(
+            `Validación fallida para ${designId}. Campos faltantes: ${missingFields.join(', ')}`
+        );
+    }
+    
+    // Validar que duty_level sea válido
+    const validDutyLevels = ['HD', 'STANDARD', 'LIGHT', 'HEAVY'];
+    if (!validDutyLevels.includes(record.duty_level)) {
+        throw new Error(
+            `duty_level inválido para ${designId}: ${record.duty_level}. Valores válidos: ${validDutyLevels.join(', ')}`
+        );
+    }
+    
+    // Validar que filter_family sea válido
+    const validFamilies = ['ACEITE', 'COMBUSTIBLE', 'AIRE', 'HIDRÁULICO'];
+    if (!validFamilies.includes(record.filter_family)) {
+        throw new Error(
+            `filter_family inválida para ${designId}: ${record.filter_family}. Valores válidos: ${validFamilies.join(', ')}`
+        );
+    }
+    
+    // Validar que priority_reference esté en cross_references
+    if (!record.all_cross_references.includes(record.priority_reference)) {
+        throw new Error(
+            `priority_reference ${record.priority_reference} no existe en all_cross_references para ${designId}`
+        );
+    }
+    
+    return true;
+}
 
 /**
- * NODO 3: Función de Búsqueda Estricta.
+ * NODO 3: Función de Búsqueda Estricta
+ * Retorna la data maestra completa y validada
  */
 export async function findExactHomologation(normalizedCode) {
-    // 1. Buscar el Master ID usando el código de entrada
+    console.log(`[NODO 3] Buscando homologación para: ${normalizedCode}`);
+    
+    // Validar entrada
+    if (!normalizedCode || typeof normalizedCode !== 'string') {
+        console.error(`[NODO 3] Error: Código inválido`);
+        return { found: false, error: "INVALID_INPUT" };
+    }
+    
+    // PASO 1: Buscar el Master ID usando el código de entrada
     const masterDesignId = REFERENCE_INDEX[normalizedCode];
-
     if (!masterDesignId) {
-        // Fallo: No se encontró un Master ID para este código (INVALID_CODE)
-        console.log(`[NODO 3] Fallo: No hay Master ID para ${normalizedCode}.`);
-        return { found: false };
+        console.log(`[NODO 3] ✗ No hay Master ID para ${normalizedCode}`);
+        return {
+            found: false,
+            error: "NOT_IN_INDEX",
+            normalized_code: normalizedCode
+        };
     }
-
-    // 2. Recuperar la data maestra de especificaciones
+    
+    console.log(`[NODO 3] ✓ Master ID encontrado: ${masterDesignId}`);
+    
+    // PASO 2: Recuperar la data maestra
     const rawData = MASTER_DESIGN_DATA[masterDesignId];
-
     if (!rawData) {
-        // Fallo de integridad: Master ID encontrado pero data faltante
-        console.error(`[NODO 3] Fallo de integridad: Data para ${masterDesignId} no existe.`);
-        return { found: false };
+        console.error(`[NODO 3] ✗ Integridad fallida: Data para ${masterDesignId} no existe`);
+        return {
+            found: false,
+            error: "INTEGRITY_ERROR",
+            master_design_id: masterDesignId
+        };
     }
-
-    // 3. Éxito: Devolver la data requerida
-    return { 
-        found: true, 
+    
+    // PASO 3: Validar integridad del registro maestro
+    try {
+        validateMasterRecord(rawData, masterDesignId);
+    } catch (validationError) {
+        console.error(`[NODO 3] ✗ Validación fallida:`, validationError.message);
+        return {
+            found: false,
+            error: "VALIDATION_ERROR",
+            details: validationError.message,
+            master_design_id: masterDesignId
+        };
+    }
+    
+    // PASO 4: Verificar que el registro esté activo
+    if (!rawData.is_active) {
+        console.warn(`[NODO 3] ⚠ Registro inactivo para ${masterDesignId}`);
+        return {
+            found: false,
+            error: "INACTIVE_RECORD",
+            master_design_id: masterDesignId
+        };
+    }
+    
+    // PASO 5: Éxito - Retornar data maestra completa
+    console.log(`[NODO 3] ✓ Homologación válida encontrada: ${rawData.master_name}`);
+    
+    return {
+        found: true,
+        masterDesignId: masterDesignId,
         rawData: {
+            // Identificadores
+            design_id: rawData.design_id,
+            master_name: rawData.master_name,
+            
+            // Clasificación (LA VERDAD)
             filter_family: rawData.filter_family,
             duty_level: rawData.duty_level,
-            priority_reference: rawData.priority_reference, // Usado por NODO 4
-            priority_brand: rawData.priority_brand,         // Usado por NODO 4
-            cross_reference: rawData.all_cross_references, 
-            specs: rawData.specs
+            
+            // Referencias
+            priority_reference: rawData.priority_reference,
+            priority_brand: rawData.priority_brand,
+            cross_reference: rawData.all_cross_references,
+            oem_codes: rawData.oem_codes,
+            
+            // Especificaciones
+            specs: rawData.specs,
+            
+            // Metadata
+            created_at: rawData.created_at,
+            last_updated: rawData.last_updated,
+            version: rawData.version
         }
     };
 }
+
+/**
+ * FUNCIONES AUXILIARES: Para búsquedas y mantenimiento
+ */
+
+/**
+ * Obtener todos los códigos que apuntan a un diseño
+ */
+export function getCodesForDesign(designId) {
+    return Object.entries(REFERENCE_INDEX)
+        .filter(([_, id]) => id === designId)
+        .map(([code, _]) => code);
+}
+
+/**
+ * Listar todos los diseños activos
+ */
+export function listActiveDesigns() {
+    return Object.entries(MASTER_DESIGN_DATA)
+        .filter(([_, data]) => data.is_active)
+        .map(([id, data]) => ({
+            design_id: id,
+            name: data.master_name,
+            family: data.filter_family,
+            duty_level: data.duty_level
+        }));
+}
+
+/**
+ * Validar que el índice sea consistente con los datos maestros
+ */
+export function validateDatabaseIntegrity() {
+    console.log("[DB] Validando integridad de base de datos...");
+    const errors = [];
+    
+    // Verificar que todos los Master IDs en el índice existan
+    const indexedIds = new Set(Object.values(REFERENCE_INDEX));
+    for (const designId of indexedIds) {
+        if (!MASTER_DESIGN_DATA[designId]) {
+            errors.push(`Master ID ${designId} en índice pero no en datos maestros`);
+        }
+    }
+    
+    // Verificar integridad de cada registro maestro
+    for (const [designId, record] of Object.entries(MASTER_DESIGN_DATA)) {
+        try {
+            validateMasterRecord(record, designId);
+        } catch (error) {
+            errors.push(error.message);
+        }
+    }
+    
+    if (errors.length > 0) {
+        console.error("[DB] ✗ Errores de integridad encontrados:");
+        errors.forEach(err => console.error(`  - ${err}`));
+        return false;
+    }
+    
+    console.log("[DB] ✓ Base de datos íntegra y consistente");
+    return true;
+}
+
+// Validar integridad al cargar el módulo
+validateDatabaseIntegrity();
