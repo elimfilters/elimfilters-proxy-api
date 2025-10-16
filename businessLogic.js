@@ -2,7 +2,7 @@
 // Lógica de negocio para determinación de niveles de servicio
 // CORRECCIÓN: Eliminada lógica de suposición, implementada validación de data maestra
 
-export function determineDutyLevel(family, specs, oemCodes, crossReference, rawData) {
+function determineDutyLevel(family, specs, oemCodes, crossReference, rawData) {
     // Validar que rawData existe
     if (!rawData) {
         throw new Error('rawData no fue proporcionado. La clasificación de Duty Level requiere data maestra.');
@@ -21,7 +21,7 @@ export function determineDutyLevel(family, specs, oemCodes, crossReference, rawD
     );
 }
 
-export function validateMasterDataIntegrity(rawData) {
+function validateMasterDataIntegrity(rawData) {
     // Validar que todos los campos críticos existan en la data maestra
     const requiredFields = ['duty_level', 'sku', 'family', 'specs'];
     
@@ -38,7 +38,7 @@ export function validateMasterDataIntegrity(rawData) {
     return true;
 }
 
-export function processFilterData(family, specs, oemCodes, crossReference, rawData) {
+function processFilterData(family, specs, oemCodes, crossReference, rawData) {
     // Validar integridad de data maestra primero
     validateMasterDataIntegrity(rawData);
     
@@ -56,3 +56,40 @@ export function processFilterData(family, specs, oemCodes, crossReference, rawDa
         timestamp: new Date().toISOString()
     };
 }
+
+// Funciones auxiliares para generación de SKU
+function getElimfiltersPrefix(family) {
+    const prefixMap = {
+        'ACEITE': 'ELM-OIL-',
+        'COMBUSTIBLE': 'ELM-FUEL-',
+        'AIRE': 'ELM-AIR-',
+        'HIDRÁULICO': 'ELM-HYD-'
+    };
+    
+    return prefixMap[family] || 'ELM-';
+}
+
+function applyBaseCodeLogic(duty, family, oemCodes, crossReference) {
+    // Lógica para extraer base code de referencias
+    if (crossReference && Array.isArray(crossReference) && crossReference.length > 0) {
+        return crossReference[0];
+    }
+    
+    if (oemCodes && Array.isArray(oemCodes) && oemCodes.length > 0) {
+        return oemCodes[0];
+    }
+    
+    throw new Error('No se encontró base code válido en referencias OEM o cross-reference');
+}
+
+// ============================================================================
+// EXPORTACIONES (CommonJS)
+// ============================================================================
+
+module.exports = {
+    determineDutyLevel,
+    validateMasterDataIntegrity,
+    processFilterData,
+    getElimfiltersPrefix,
+    applyBaseCodeLogic
+};
