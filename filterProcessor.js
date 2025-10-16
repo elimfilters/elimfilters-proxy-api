@@ -1,11 +1,10 @@
-// filterProcessor.js (Orquestador Interno)
+// filterProcessor.js (Orquestador Interno - Final)
 
 import { readFromCache, writeToMasterAndCache } from './dataAccess.js';
 import { findExactHomologation } from './homologationDB.js';
 import { getElimfiltersPrefix, determineDutyLevel, applyBaseCodeLogic } from './businessLogic.js';
 import { buildFilterResponse } from './jsonBuilder.js'; 
 
-// NODO 2: VALIDACIÓN & CACHÉ CHECK (Logica interna)
 async function validateAndCheckCache(inputCode) {
     let normalizedCode = String(inputCode || '').toUpperCase().trim().replace(/[\s\-/]/g, '');
 
@@ -13,7 +12,7 @@ async function validateAndCheckCache(inputCode) {
         return { valid: false, error: "CÓDIGO INVÁLIDO. Por favor, ingrese un código válido OEM o Cross Reference...", normalized: normalizedCode };
     }
     
-    // NODO 4.5 LECTURA (Ruta Rápida)
+    // NODO 4.5 LECTURA (Desactivado temporalmente)
     const cachedData = await readFromCache(normalizedCode); 
 
     if (cachedData) {
@@ -23,9 +22,8 @@ async function validateAndCheckCache(inputCode) {
     return { valid: true, status: "NEW", normalized: normalizedCode };
 }
 
-
-// LÓGICA DE PROCESAMIENTO CENTRAL (Exportación Final)
-export async function processFilterCode(inputCode, options = {}) { // <-- AQUÍ ESTÁ LA EXPORTACIÓN FINAL
+// LÓGICA DE PROCESAMIENTO CENTRAL (Exportación Correcta)
+export async function processFilterCode(inputCode, options = {}) {
     
     const validationResult = await validateAndCheckCache(inputCode);
     const normalized = validationResult.normalized;
@@ -38,7 +36,7 @@ export async function processFilterCode(inputCode, options = {}) { // <-- AQUÍ 
         return buildFilterResponse(validationResult.cachedData); 
     }
 
-    // NODO 3: BÚSQUEDA ESTRICTA
+    // NODO 3: BÚSQUEDA ESTRICTA (Se asume que devuelve la prioridad correcta)
     const { found, rawData } = await findExactHomologation(normalized);
     
     if (!found) {
@@ -49,9 +47,7 @@ export async function processFilterCode(inputCode, options = {}) { // <-- AQUÍ 
     const family = rawData.filter_family;
     const duty = rawData.duty_level || determineDutyLevel(family, rawData.specs, rawData.oem_codes, rawData.cross_reference); 
     
-    // Asumiendo que rawData ya tiene la prioridad definida por el NODO 3
     const baseCodeTarget = rawData.priority_reference || applyBaseCodeLogic(duty, family, rawData.oem_codes, rawData.cross_reference);
-    
     const prefix = getElimfiltersPrefix(family);
     
     const numericCode = baseCodeTarget.replace(/[^0-9]/g, '');
@@ -67,7 +63,7 @@ export async function processFilterCode(inputCode, options = {}) { // <-- AQUÍ 
         // ... (resto de datos)
     };
 
-    // NODO 4.5: PERSISTENCIA (Desactivada pero llamada para que el código no falle)
+    // NODO 4.5: PERSISTENCIA (Desactivada pero llamada)
     await writeToMasterAndCache(processedData);
 
     // NODO 5: GENERACIÓN DE RESPUESTA JSON
