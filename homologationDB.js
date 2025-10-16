@@ -1,16 +1,11 @@
 // homologationDB.js (Base de Datos de Homologación - Fuente de Verdad)
 /**
  * TABLA 1: ÍNDICE DE BÚSQUEDA RÁPIDA
- * Mapea CUALQUIER código de entrada (LF3620, 33166) a un ID de diseño maestro único.
- * Esta tabla es el punto de entrada para normalizar referencias heterogéneas.
  */
 const REFERENCE_INDEX = {
-    // Código WIX 33166 y sus homólogos apuntan al Master Design D-F003
     "33166": "D-F003-FUEL",
     "FF5507": "D-F003-FUEL",
     "P556245": "D-F003-FUEL",
-    
-    // Ejemplo de un filtro de aceite
     "LF3000": "D-F001-OIL",
     "P552100": "D-F001-OIL",
     "51515": "D-F001-OIL",
@@ -18,32 +13,18 @@ const REFERENCE_INDEX = {
 };
 
 /**
- * TABLA 2: REGISTRO MAESTRO DE ESPECIFICACIONES (La Fuente de la Verdad)
- * La clave es el ID de diseño físico único.
- * CRÍTICO: Todos los campos requeridos deben estar presentes.
+ * TABLA 2: REGISTRO MAESTRO DE ESPECIFICACIONES
  */
 const MASTER_DESIGN_DATA = {
-    // Diseño 1: Filtro de Aceite HD
     "D-F001-OIL": {
-        // Identificadores
         design_id: "D-F001-OIL",
         master_name: "Filtro de Aceite Donaldson - Serie 1",
-        
-        // Clasificación (LA FUENTE DE VERDAD PARA DUTY_LEVEL)
         filter_family: "ACEITE",
-        duty_level: "HD",  // ✓ OBLIGATORIO - NO SE ADIVINA
-        
-        // Referencias de prioridad (para generación de SKU)
-        priority_reference: "P552100",  // Referencia principal para SKU
-        priority_brand: "DONALDSON",    // Marca de prioridad
-        
-        // Todas las referencias cruzadas
+        duty_level: "HD",
+        priority_reference: "P552100",
+        priority_brand: "DONALDSON",
         all_cross_references: ["LF3000", "51515", "P552100", "1R0739"],
-        
-        // Código OEM (si aplica)
         oem_codes: ["1R0739", "51515"],
-        
-        // Especificaciones técnicas
         specs: {
             "Height (mm)": "142",
             "Outer Diameter (mm)": "93.5",
@@ -54,35 +35,20 @@ const MASTER_DESIGN_DATA = {
             "Spin-on": true,
             "Material": "Paper/Glass Fiber"
         },
-        
-        // Metadata
         created_at: "2024-01-01T00:00:00Z",
         last_updated: "2024-10-16T00:00:00Z",
         is_active: true,
         version: 1
     },
-    
-    // Diseño 2: Filtro de Combustible HD
     "D-F003-FUEL": {
-        // Identificadores
         design_id: "D-F003-FUEL",
         master_name: "Filtro de Combustible Donaldson - Serie 3",
-        
-        // Clasificación (LA FUENTE DE VERDAD PARA DUTY_LEVEL)
         filter_family: "COMBUSTIBLE",
-        duty_level: "HD",  // ✓ OBLIGATORIO - NO SE ADIVINA
-        
-        // Referencias de prioridad (para generación de SKU)
-        priority_reference: "P556245",  // LA CLAVE: El NODO 4 usará '6245' para el SKU
+        duty_level: "HD",
+        priority_reference: "P556245",
         priority_brand: "DONALDSON",
-        
-        // Todas las referencias cruzadas
         all_cross_references: ["33166", "FF5507", "P556245"],
-        
-        // Código OEM (si aplica)
         oem_codes: ["33166"],
-        
-        // Especificaciones técnicas
         specs: {
             "Height (mm)": "177",
             "Outer Diameter (mm)": "93",
@@ -94,8 +60,6 @@ const MASTER_DESIGN_DATA = {
             "Spin-on": true,
             "Material": "Synthetic Fiber"
         },
-        
-        // Metadata
         created_at: "2024-01-01T00:00:00Z",
         last_updated: "2024-10-16T00:00:00Z",
         is_active: true,
@@ -103,9 +67,6 @@ const MASTER_DESIGN_DATA = {
     }
 };
 
-/**
- * VALIDADOR: Verifica integridad de un registro maestro
- */
 function validateMasterRecord(record, designId) {
     const requiredFields = [
         'design_id',
@@ -130,23 +91,20 @@ function validateMasterRecord(record, designId) {
         );
     }
     
-    // Validar que duty_level sea válido
     const validDutyLevels = ['HD', 'STANDARD', 'LIGHT', 'HEAVY'];
     if (!validDutyLevels.includes(record.duty_level)) {
         throw new Error(
-            `duty_level inválido para ${designId}: ${record.duty_level}. Valores válidos: ${validDutyLevels.join(', ')}`
+            `duty_level inválido para ${designId}: ${record.duty_level}`
         );
     }
     
-    // Validar que filter_family sea válido
     const validFamilies = ['ACEITE', 'COMBUSTIBLE', 'AIRE', 'HIDRÁULICO'];
     if (!validFamilies.includes(record.filter_family)) {
         throw new Error(
-            `filter_family inválida para ${designId}: ${record.filter_family}. Valores válidos: ${validFamilies.join(', ')}`
+            `filter_family inválida para ${designId}: ${record.filter_family}`
         );
     }
     
-    // Validar que priority_reference esté en cross_references
     if (!record.all_cross_references.includes(record.priority_reference)) {
         throw new Error(
             `priority_reference ${record.priority_reference} no existe en all_cross_references para ${designId}`
@@ -156,20 +114,14 @@ function validateMasterRecord(record, designId) {
     return true;
 }
 
-/**
- * NODO 3: Función de Búsqueda Estricta
- * Retorna la data maestra completa y validada
- */
 async function findExactHomologation(normalizedCode) {
     console.log(`[NODO 3] Buscando homologación para: ${normalizedCode}`);
     
-    // Validar entrada
     if (!normalizedCode || typeof normalizedCode !== 'string') {
         console.error(`[NODO 3] Error: Código inválido`);
         return { found: false, error: "INVALID_INPUT" };
     }
     
-    // PASO 1: Buscar el Master ID usando el código de entrada
     const masterDesignId = REFERENCE_INDEX[normalizedCode];
     if (!masterDesignId) {
         console.log(`[NODO 3] ✗ No hay Master ID para ${normalizedCode}`);
@@ -182,7 +134,6 @@ async function findExactHomologation(normalizedCode) {
     
     console.log(`[NODO 3] ✓ Master ID encontrado: ${masterDesignId}`);
     
-    // PASO 2: Recuperar la data maestra
     const rawData = MASTER_DESIGN_DATA[masterDesignId];
     if (!rawData) {
         console.error(`[NODO 3] ✗ Integridad fallida: Data para ${masterDesignId} no existe`);
@@ -193,7 +144,6 @@ async function findExactHomologation(normalizedCode) {
         };
     }
     
-    // PASO 3: Validar integridad del registro maestro
     try {
         validateMasterRecord(rawData, masterDesignId);
     } catch (validationError) {
@@ -206,7 +156,6 @@ async function findExactHomologation(normalizedCode) {
         };
     }
     
-    // PASO 4: Verificar que el registro esté activo
     if (!rawData.is_active) {
         console.warn(`[NODO 3] ⚠ Registro inactivo para ${masterDesignId}`);
         return {
@@ -216,31 +165,21 @@ async function findExactHomologation(normalizedCode) {
         };
     }
     
-    // PASO 5: Éxito - Retornar data maestra completa
     console.log(`[NODO 3] ✓ Homologación válida encontrada: ${rawData.master_name}`);
     
     return {
         found: true,
         masterDesignId: masterDesignId,
         rawData: {
-            // Identificadores
             design_id: rawData.design_id,
             master_name: rawData.master_name,
-            
-            // Clasificación (LA VERDAD)
             filter_family: rawData.filter_family,
             duty_level: rawData.duty_level,
-            
-            // Referencias
             priority_reference: rawData.priority_reference,
             priority_brand: rawData.priority_brand,
             cross_reference: rawData.all_cross_references,
             oem_codes: rawData.oem_codes,
-            
-            // Especificaciones
             specs: rawData.specs,
-            
-            // Metadata
             created_at: rawData.created_at,
             last_updated: rawData.last_updated,
             version: rawData.version
@@ -248,22 +187,12 @@ async function findExactHomologation(normalizedCode) {
     };
 }
 
-/**
- * FUNCIONES AUXILIARES: Para búsquedas y mantenimiento
- */
-
-/**
- * Obtener todos los códigos que apuntan a un diseño
- */
 function getCodesForDesign(designId) {
     return Object.entries(REFERENCE_INDEX)
         .filter(([_, id]) => id === designId)
         .map(([code, _]) => code);
 }
 
-/**
- * Listar todos los diseños activos
- */
 function listActiveDesigns() {
     return Object.entries(MASTER_DESIGN_DATA)
         .filter(([_, data]) => data.is_active)
@@ -275,14 +204,10 @@ function listActiveDesigns() {
         }));
 }
 
-/**
- * Validar que el índice sea consistente con los datos maestros
- */
 function validateDatabaseIntegrity() {
     console.log("[DB] Validando integridad de base de datos...");
     const errors = [];
     
-    // Verificar que todos los Master IDs en el índice existan
     const indexedIds = new Set(Object.values(REFERENCE_INDEX));
     for (const designId of indexedIds) {
         if (!MASTER_DESIGN_DATA[designId]) {
@@ -290,7 +215,6 @@ function validateDatabaseIntegrity() {
         }
     }
     
-    // Verificar integridad de cada registro maestro
     for (const [designId, record] of Object.entries(MASTER_DESIGN_DATA)) {
         try {
             validateMasterRecord(record, designId);
@@ -309,15 +233,11 @@ function validateDatabaseIntegrity() {
     return true;
 }
 
-// Validar integridad al cargar el módulo
 validateDatabaseIntegrity();
-
-// ============================================================================
-// EXPORTACIONES (CommonJS)
-// ============================================================================
 
 module.exports = {
     findExactHomologation,
     getCodesForDesign,
     listActiveDesigns,
     validateDatabaseIntegrity
+};
