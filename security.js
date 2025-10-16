@@ -1,43 +1,59 @@
-// security.js
+// server.js (Versión Final con Sintaxis 'import')
 
-// Lee la API Key de las variables de entorno de Railway
-const WEBHOOK_API_KEY = process.env.WEBHOOK_API_KEY; 
-// Lista de IPs permitidas (Lee un string separado por comas de Railway)
-const ALLOWED_IPS = process.env.ALLOWED_IPS ? process.env.ALLOWED_IPS.split(',').map(ip => ip.trim()) : [];
+import express from 'express';
+import cors from 'cors';
+import { processFilterCode } from './filterProcessor.js';
+import { authenticateWebhook, ipWhitelist } from './security.js';
+import { logWebhookActivity, sendCriticalAlert } from './utils.js';
 
-// 1. Middleware de Autenticación por API Key (CAPA 1)
-function authenticateWebhook(req, res, next) {
-    const apiKey = req.headers['x-api-key'];
+const app = express();
+const PORT = process.env.PORT || 3000;
+const ALERT_EMAIL = "elimfilters@gmail.com";
 
-    if (!WEBHOOK_API_KEY || !apiKey || apiKey !== WEBHOOK_API_KEY) {
-        console.warn(`[SEGURIDAD] Intento de acceso no autorizado. API Key faltante/inválida.`);
-        return res.status(401).json({
-            error: "UNAUTHORIZED",
-            message: "API Key inválida o faltante. Acceso denegado."
-        });
+// --- MIDDLEWARE ---
+app.use(express.json());
+app.use(cors({ origin: 'https://www.elimfilters.com' })); 
+
+// --- NODO 1: WEBHOOK ENDPOINT (Blindado) ---
+app.post(
+    '/webhook/filter-query', 
+    ipWhitelist,         
+    authenticateWebhook, 
+    // Rate Limiting debe ser importado y usado aquí si está instalado
+    async (req, res) => {
+        const startTime = Date.now();
+        const inputCode = req.body.code;
+        let finalStatus = 500;
+        
+        try {
+            // Llama a la lógica central del catálogo
+            const result = await processFilterCode(inputCode, req.body.options); 
+            
+            finalStatus = 200;
+            res.status(finalStatus).json(result);
+
+        } catch (error) {
+            // NODO 6: Captura y maneja los errores
+            
+            if (error.status === 400) {
+                // FALLO DE NEGOCIO (400)
+                finalStatus = 400;
+                res.status(finalStatus).json(error.safeErrorResponse);
+            } else { 
+                // FALLO CRÍTICO (500)
+                await sendCriticalAlert(ALERT_EMAIL, `[CRÍTICO] Fallo de Servidor/Datos para ${inputCode}`, `Error: ${error.message}`);
+                finalStatus = 500;
+                const safeResponse = error.safeErrorResponse || { results: [{ error: "INTERNAL_SERVER_ERROR", message: "Error crítico de servidor.", ok: false }] };
+                res.status(finalStatus).json(safeResponse);
+            }
+
+        } finally {
+            // NODO 7: Logging
+            logWebhookActivity(req, finalStatus, startTime);
+        }
     }
-    next();
-}
+);
 
-// 2. Middleware de Lista Blanca de IPs (CAPA 3)
-function ipWhitelist(req, res, next) {
-    // Si no hay IPs permitidas configuradas, se permite el paso por defecto.
-    if (ALLOWED_IPS.length === 0) return next(); 
-
-    // Obtener la IP real del cliente (crucial en entornos cloud como Railway)
-    const clientIp = req.headers['x-forwarded-for'] ? req.headers['x-forwarded-for'].split(',')[0].trim() : req.ip;
-
-    if (!ALLOWED_IPS.includes(clientIp)) {
-        console.warn(`[SEGURIDAD] IP no autorizada: ${clientIp}`);
-        return res.status(403).json({
-            error: "FORBIDDEN",
-            message: "Acceso denegado: IP no autorizada."
-        });
-    }
-    next();
-}
-
-module.exports = {
-    authenticateWebhook,
-    ipWhitelist
-};
+app.listen(PORT, () => {
+    console.log(`✅ ELIMFILTERS API running on port ${PORT}`);
+});
