@@ -23,28 +23,3 @@
     "nodemon": "^3.0.1"
   }
 }
-```
-
-**2. Haz push a GitHub**
-
-**3. Railway hará redeploy automático** (o manualmente en Railway → Deploy)
-
-**4. Mientras se instala, configura las variables de email en Railway → Variables:**
-```
-NODEMAILER_HOST=smtp.gmail.com
-NODEMAILER_PORT=587
-NODEMAILER_SECURE=false
-NODEMAILER_USER=tu_email@gmail.com
-NODEMAILER_PASS=tu_app_password
-NODEMAILER_FROM=noreply@elimfilters.com
-ALERT_EMAIL=destinatario@example.com
-ENABLE_FILE_LOGGING=true
-LOG_LEVEL=info
-```
-
-(Si usas otro proveedor de email, reemplaza los valores)
-
-**5. Luego de que Railway haga redeploy exitoso, verifica en Logs que veas:**
-```
-[SECURITY INIT] API Key configurada: ✓
-[STARTUP] ✓ ELIMFILTERS Proxy API escuchando en puerto 3000
