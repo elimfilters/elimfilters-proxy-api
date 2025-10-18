@@ -1,8 +1,14 @@
-// filterProcessor.js (Orquestador Interno - Flujo Completo Corregido)
+// filterProcessor.js (Orquestador Interno - Flujo Completo Corregido con IA)
 const dataAccess = require('./dataAccess');
 const homologationDB = require('./homologationDB');
 const businessLogic = require('./businessLogic');
 const jsonBuilder = require('./jsonBuilder');
+const OpenAI = require('openai'); // === NUEVO ===
+
+// Inicializar el cliente de OpenAI
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY, // === NUEVO === (Asegúrate de añadir esta variable a tu .env)
+});
 
 /**
  * NODO 2: Validación y Normalización de entrada
@@ -100,6 +106,94 @@ async function findAndValidateMasterData(normalizedCode) {
                 }]
             }
         };
+    }
+}
+
+/**
+ * NODO 3.5: Validador Ciego de IA
+ * === NUEVO ===
+ * Verifica que la respuesta de OpenAI sea coherente y segura antes de usarla.
+ */
+function validateAIGeneration(aiData) {
+    console.log('[NODO 3.5] Validando datos generados por IA...');
+
+    // Regla 1: ¿La familia es válida?
+    const validFamilies = ['FUEL', 'AIR', 'OIL', 'HYDRAULIC', 'ACEITE', 'COMBUSTIBLE', 'AIRE', 'HIDRÁULICO'];
+    if (!aiData.family || !validFamilies.includes(aiData.family.toUpperCase())) {
+        console.warn('[NODO 3.5] ✗ Validación fallida: Familia inválida');
+        return null; // Falla la validación
+    }
+
+    // Regla 2: ¿El duty es válido?
+    const validDuty = ['HD', 'LD', 'STANDARD', 'LIGHT', 'HEAVY'];
+    if (!aiData.duty || !validDuty.includes(aiData.duty.toUpperCase())) {
+        console.warn('[NODO 3.5] ✗ Validación fallida: Duty inválido');
+        return null; // Falla la validación
+    }
+
+    // Regla 3: ¿Hay códigos OEM?
+    if (!aiData.oem_codes || (Array.isArray(aiData.oem_codes) && aiData.oem_codes.length === 0)) {
+        console.warn('[NODO 3.5] ✗ Validación fallida: Sin códigos OEM');
+        return null; // Falla la validación
+    }
+
+    console.log('[NODO 3.5] ✓ Validación de IA exitosa');
+    return aiData; // La validación es exitosa
+}
+
+/**
+ * NODO 4: Generación con OpenAI (con validación)
+ * === NUEVO ===
+ */
+async function generateWithOpenAI(normalizedCode) {
+    try {
+        console.log(`[NODO 4] Generando nuevo filtro con OpenAI para: ${normalizedCode}`);
+
+        const prompt = `Analiza este código de filtro OEM: '${normalizedCode}'
+        
+        Extrae en formato JSON:
+        - family: (Tipo de familia: Fuel, Air, Hydraulic, Oil, etc.)
+        - duty: (HD o LD)
+        - oem_codes: (Códigos OEM encontrados)
+        - cross_references: (Referencias cruzadas)
+        - filter_type: (Tipo de filtro)
+        - brand: (Marca detectada)
+        
+        Responde SOLO con el JSON válido.`;
+
+        const completion = await openai.chat.completions.create({
+            model: "gpt-4o-mini",
+            messages: [{ role: "user", content: prompt }],
+            response_format: { type: "json_object" },
+        });
+
+        const aiResponse = JSON.parse(completion.choices[0].message.content);
+
+        // PASAR LA RESPUESTA POR EL VALIDADOR CIEGO
+        const validatedData = validateAIGeneration(aiResponse);
+
+        if (!validatedData) {
+            throw new Error("La generación de OpenAI no pasó la validación de seguridad.");
+        }
+
+        return {
+            source: "AI_GENERATED",
+            rawData: {
+                // Convertimos el formato de IA al formato que espera el servidor
+                filter_family: validatedData.family,
+                duty_level: validatedData.duty,
+                priority_reference: validatedData.cross_references?.[0] || normalizedCode,
+                priority_brand: validatedData.brand || 'UNKNOWN',
+                cross_reference: validatedData.cross_references || [],
+                oem_codes: validatedData.oem_codes || [],
+                specs: {}, // OpenAI no da specs, dejamos vacío por ahora
+            }
+        };
+
+    } catch (error) {
+        console.error(`[NODO 4] ✗ Error en generación con OpenAI: ${error.message}`);
+        // Relanzamos el error para que el flujo principal lo maneje
+        throw error;
     }
 }
 
@@ -210,6 +304,7 @@ function buildResponse(processedData) {
 
 /**
  * FUNCIÓN PRINCIPAL: Orquesta todo el flujo
+ * === MODIFICADO ===
  */
 async function processFilterCode(inputCode, options = {}) {
     console.log(`[INICIO] Procesando código: ${inputCode}`);
@@ -257,6 +352,50 @@ async function processFilterCode(inputCode, options = {}) {
         return response;
 
     } catch (error) {
+        // === NUEVA LÓGICA DE OPENAI ===
+        if (error.status === 404) {
+            console.log(`[FLUJO] Código no encontrado en BD maestra. Intentando generar con IA...`);
+            try {
+                // NODO 4: Generar con OpenAI
+                const aiGeneratedData = await generateWithOpenAI(error.safeErrorResponse.results[0].query_norm);
+                
+                // NODO 4.5: Generar SKU a partir de los datos de la IA
+                const skuGeneration = generateFinalSku(aiGeneratedData.rawData, error.safeErrorResponse.results[0].query_norm);
+
+                // Construir datos procesados
+                const processedData = {
+                    queryNorm: error.safeErrorResponse.results[0].query_norm,
+                    sku: skuGeneration.finalSku,
+                    duty: skuGeneration.duty,
+                    filterType: aiGeneratedData.rawData.filter_family,
+                    family: aiGeneratedData.rawData.filter_family,
+                    specs: aiGeneratedData.rawData.specs,
+                    oemCodes: aiGeneratedData.rawData.oem_codes,
+                    crossReference: aiGeneratedData.rawData.cross_reference,
+                    baseCode: skuGeneration.baseCode,
+                    prefix: skuGeneration.prefix,
+                    timestamp: new Date().toISOString(),
+                    source: "AI_GENERATED" // Marcar como generado por IA
+                };
+
+                // NODO 4.5: Persistencia (no bloquea si falla)
+                const persistSuccessful = await persistProcessedData(processedData, error.safeErrorResponse.results[0].query_norm);
+                processedData.cached = persistSuccessful;
+
+                // NODO 5: Construcción de respuesta
+                const response = buildResponse(processedData);
+
+                console.log(`[ÉXITO IA] Código ${error.safeErrorResponse.results[0].query_norm} generado y procesado → SKU: ${skuGeneration.finalSku}`);
+                return response;
+
+            } catch (aiError) {
+                console.error(`[ERROR IA] La generación con IA falló: ${aiError.message}`);
+                // Si la IA también falla, devolvemos el error original de "no encontrado".
+                return error.safeErrorResponse;
+            }
+        }
+
+        // LÓGICA ORIGINAL DE MANEJO DE ERRORES
         console.error(`[ERROR] Procesamiento fallido:`, error);
 
         // Si el error ya es un objeto de respuesta formateado, retornarlo
