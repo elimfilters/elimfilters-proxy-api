@@ -4,7 +4,8 @@ FROM node:20-alpine
 WORKDIR /app
 COPY package*.json ./
 
-RUN npm ci --omit=dev
+# Instala dependencias sin bloquear por falta de lockfile
+RUN npm install --omit=dev --no-audit --no-fund
 
 COPY . .
 
