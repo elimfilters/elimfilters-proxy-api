@@ -1,216 +1,466 @@
-// server.js (Servidor Proxy - Versión Híbrida)
-require('dotenv').config();
-
 const express = require('express');
-const cors = require('cors');
+const axios = require('axios');
+const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-const axios = require('axios'); // <--- Asegúrate de tener axios: npm install axios
-
-// Importar módulos locales
-const security = require('./security');
-const utils = require('./utils');
+const cors = require('cors');
+const NodeCache = require('node-cache');
+const morgan = require('morgan');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-console.log('[STARTUP] Iniciando ELIMFILTERS Proxy API (Modo Híbrido)...');
-console.log(`[CONFIG] Ambiente: ${process.env.NODE_ENV || 'development'}`);
+// ============================================
+// CONFIGURACIÓN
+// ============================================
 
-// ============================================================================
-// MIDDLEWARE GLOBAL
-// ============================================================================
-const corsOptions = {
-    origin: (process.env.ALLOWED_ORIGINS || 'http://localhost:3000').split(','),
-    credentials: true,
-    methods: ['GET', 'POST', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'x-api-key'],
-    maxAge: 3600
+// URL del webhook de n8n (configurar en Railway)
+const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || 'https://elimfilters.app.n8n.cloud/webhook/ELIMFILTERS_SEARCH_MASTER';
+
+// Sistema de caché inteligente
+const masterCache = new NodeCache({ 
+  stdTTL: 86400,      // 24 horas para códigos homologados
+  checkperiod: 3600,   // Check cada 1 hora
+  useClones: false     // Performance
+});
+
+const aiCache = new NodeCache({ 
+  stdTTL: 3600,        // 1 hora para códigos generados por IA
+  checkperiod: 600,
+  useClones: false
+});
+
+// Estadísticas
+const stats = {
+  totalRequests: 0,
+  cacheHits: 0,
+  cacheMisses: 0,
+  masterHits: 0,
+  aiHits: 0,
+  errors: 0,
+  avgResponseTime: []
 };
-app.use(cors(corsOptions));
+
+// ============================================
+// MIDDLEWARE
+// ============================================
+
+// Seguridad
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+    },
+  },
+  hsts: {
+    maxAge: 31536000,
+    includeSubDomains: true,
+    preload: true
+  }
+}));
+
+// CORS
+app.use(cors({
+  origin: process.env.ALLOWED_ORIGINS ? 
+    process.env.ALLOWED_ORIGINS.split(',') : 
+    '*',
+  methods: ['GET', 'POST'],
+  credentials: true
+}));
+
+// Body parsing
 app.use(express.json({ limit: '10kb' }));
-app.use(express.urlencoded({ limit: '10kb', extended: true }));
+app.use(express.urlencoded({ extended: true, limit: '10kb' }));
 
-// Logging de requests
-app.use((req, res, next) => {
-    console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
-    next();
+// Logging
+app.use(morgan('combined'));
+
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  max: 100, // 100 requests por IP
+  message: {
+    error: true,
+    message: 'Too many requests, please try again later.'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 
-// ============================================================================
-// RUTAS PÚBLICAS (sin autenticación)
-// ============================================================================
+app.use('/api/', limiter);
+
+// API Key middleware (opcional pero recomendado)
+const apiKeyAuth = (req, res, next) => {
+  const apiKey = process.env.API_KEY;
+  
+  // Si no hay API_KEY configurado, skip
+  if (!apiKey) return next();
+  
+  const providedKey = req.headers['x-api-key'] || req.query.apikey;
+  
+  if (!providedKey || providedKey !== apiKey) {
+    return res.status(401).json({
+      error: true,
+      message: 'Unauthorized: Invalid or missing API key'
+    });
+  }
+  
+  next();
+};
+
+// ============================================
+// UTILIDADES
+// ============================================
+
+// Normalizar query
+function normalizeQuery(query) {
+  return query
+    .toString()
+    .toUpperCase()
+    .trim()
+    .replace(/\s+/g, '')
+    .replace(/[^A-Z0-9-]/g, '');
+}
+
+// Generar cache key
+function getCacheKey(query) {
+  return `filter:${normalizeQuery(query)}`;
+}
+
+// Calcular tiempo de respuesta promedio
+function updateAvgResponseTime(duration) {
+  stats.avgResponseTime.push(duration);
+  if (stats.avgResponseTime.length > 100) {
+    stats.avgResponseTime.shift(); // Mantener últimas 100
+  }
+}
+
+function getAvgResponseTime() {
+  if (stats.avgResponseTime.length === 0) return 0;
+  const sum = stats.avgResponseTime.reduce((a, b) => a + b, 0);
+  return Math.round(sum / stats.avgResponseTime.length);
+}
+
+// ============================================
+// ENDPOINTS
+// ============================================
+
+// Health check
 app.get('/health', (req, res) => {
-    res.json({
-        status: 'OK',
-        timestamp: new Date().toISOString(),
-        uptime: process.uptime(),
-        mode: 'HYBRID (n8n Worker)'
-    });
-});
-
-// ============================================================================
-// RUTAS PROTEGIDAS (con autenticación y rate limiting)
-// ============================================================================
-const webhookLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 100,
-    message: { error: 'TOO_MANY_REQUESTS', message: 'Demasiadas solicitudes.' },
-    standardHeaders: true,
-    legacyHeaders: false,
-});
-
-// Aplicar seguridad a la ruta del webhook
-app.use('/webhook/', webhookLimiter, security.secureWebhook);
-
-/**
- * WEBHOOK PROXY: Reenvía la petición al flujo de n8n
- * POST /webhook/filter-query
- * Body: { q: "CODE_TO_SEARCH" }
- */
-app.post('/webhook/filter-query', async (req, res) => {
-    const startTime = Date.now();
-    const requestId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-
-    try {
-        console.log(`[${requestId}] POST /webhook/filter-query - Reenviando a n8n`);
-
-        // Validar que el body exista
-        if (!req.body || !req.body.q) {
-            console.warn(`[${requestId}] Body vacío o campo 'q' faltante`);
-            return res.status(400).json({
-                results: [{ error: 'MISSING_QUERY', message: 'Campo "q" requerido en el body', ok: false }],
-                metadata: { success: false }
-            });
-        }
-
-        // === NUEVA LÓGICA: LLAMAR A N8N ===
-        const n8nWebhookUrl = process.env.N8N_WORKFLOW_WEBHOOK_URL;
-        if (!n8nWebhookUrl) {
-            throw new Error('N8N_WORKFLOW_WEBHOOK_URL no está configurada en el .env');
-        }
-
-        // Reenviar la petición a n8n
-        const n8nResponse = await axios.post(n8nWebhookUrl, {
-            q: req.body.q
-        }, {
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            timeout: 30000 // Timeout de 30 segundos para la llamada a n8n
-        });
-
-        const result = n8nResponse.data;
-        const duration = Date.now() - startTime;
-        console.log(`[${requestId}] ✓ Respuesta de n8n recibida en ${duration}ms`);
-
-        // Registrar actividad exitosa
-        await utils.logWebhookActivity({
-            requestId,
-            sku: req.body.q,
-            status: 'SUCCESS',
-            duration,
-            timestamp: new Date().toISOString()
-        });
-
-        // Devolver la respuesta de n8n directamente al cliente
-        return res.status(200).json(result);
-
-    } catch (error) {
-        const duration = Date.now() - startTime;
-        console.error(`[${requestId}] ✗ Error después de ${duration}ms:`, error.message);
-
-        // Registrar error
-        await utils.logWebhookActivity({
-            requestId,
-            sku: req.body?.q || 'UNKNOWN',
-            status: 'ERROR',
-            error: utils.sanitizeError(error),
-            duration,
-            timestamp: new Date().toISOString()
-        });
-
-        // Determinar código de status HTTP
-        let statusCode = 500;
-        let errorResponse = { error: 'INTERNAL_SERVER_ERROR', message: 'Error procesando la solicitud' };
-
-        // Si es un error de axios (ej. n8n no responde)
-        if (error.code === 'ECONNABORTED') {
-            statusCode = 504; // Gateway Timeout
-            errorResponse = { error: 'N8N_TIMEOUT', message: 'El servicio de búsqueda tardó demasiado en responder.' };
-        } else if (error.response) {
-            // n8n devolvió un error (ej. 404, 500)
-            statusCode = error.response.status;
-            errorResponse = error.response.data; // Devolver el error de n8n
-        }
-
-        return res.status(statusCode).json({
-            results: [{ ...errorResponse, ok: false }],
-            metadata: { success: false }
-        });
+  res.json({
+    status: 'healthy',
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+    cache: {
+      master: masterCache.getStats(),
+      ai: aiCache.getStats()
     }
+  });
 });
 
-// ... (El resto del archivo: debug endpoint, 404, global error handler, graceful shutdown, etc., está perfecto y no necesita cambios) ...
+// Estadísticas
+app.get('/api/stats', (req, res) => {
+  const masterStats = masterCache.getStats();
+  const aiStats = aiCache.getStats();
+  
+  res.json({
+    requests: {
+      total: stats.totalRequests,
+      errors: stats.errors,
+      successRate: stats.totalRequests > 0 
+        ? ((stats.totalRequests - stats.errors) / stats.totalRequests * 100).toFixed(2) + '%'
+        : '0%'
+    },
+    cache: {
+      hits: stats.cacheHits,
+      misses: stats.cacheMisses,
+      hitRate: stats.totalRequests > 0 
+        ? (stats.cacheHits / stats.totalRequests * 100).toFixed(2) + '%'
+        : '0%',
+      master: {
+        entries: masterStats.keys,
+        hits: masterStats.hits,
+        misses: masterStats.misses
+      },
+      ai: {
+        entries: aiStats.keys,
+        hits: aiStats.hits,
+        misses: aiStats.misses
+      }
+    },
+    sources: {
+      master: stats.masterHits,
+      ai: stats.aiHits,
+      masterRate: stats.totalRequests > 0 
+        ? (stats.masterHits / stats.totalRequests * 100).toFixed(2) + '%'
+        : '0%'
+    },
+    performance: {
+      avgResponseTime: getAvgResponseTime() + 'ms'
+    },
+    timestamp: new Date().toISOString()
+  });
+});
 
-// ============================================================================
-// MANEJO DE RUTAS NO ENCONTRADAS
-// ============================================================================
-app.use((req, res) => {
-    res.status(404).json({
-        error: 'NOT_FOUND',
-        message: `Ruta ${req.method} ${req.path} no existe`,
-        available_routes: ['GET /health', 'POST /webhook/filter-query']
+// Limpiar caché (útil para debugging)
+app.post('/api/cache/clear', apiKeyAuth, (req, res) => {
+  const { type } = req.body;
+  
+  if (type === 'master') {
+    masterCache.flushAll();
+    res.json({ message: 'Master cache cleared', keys: 0 });
+  } else if (type === 'ai') {
+    aiCache.flushAll();
+    res.json({ message: 'AI cache cleared', keys: 0 });
+  } else if (type === 'all') {
+    const masterKeys = masterCache.keys().length;
+    const aiKeys = aiCache.keys().length;
+    masterCache.flushAll();
+    aiCache.flushAll();
+    res.json({ 
+      message: 'All caches cleared', 
+      keysCleared: masterKeys + aiKeys 
     });
+  } else {
+    res.status(400).json({ 
+      error: true, 
+      message: 'Invalid type. Use: master, ai, or all' 
+    });
+  }
 });
 
-// ============================================================================
+// ============================================
+// ENDPOINT PRINCIPAL DE BÚSQUEDA
+// ============================================
+
+app.get('/api/search', async (req, res) => {
+  const startTime = Date.now();
+  stats.totalRequests++;
+  
+  try {
+    const { q } = req.query;
+    
+    // Validación
+    if (!q) {
+      return res.status(400).json({
+        error: true,
+        message: "Parameter 'q' is required",
+        example: '/api/search?q=LF9000'
+      });
+    }
+    
+    const normalizedQuery = normalizeQuery(q);
+    const cacheKey = getCacheKey(normalizedQuery);
+    
+    // ========================================
+    // PASO 1: Verificar caché Master (24h)
+    // ========================================
+    
+    let cachedMaster = masterCache.get(cacheKey);
+    if (cachedMaster) {
+      stats.cacheHits++;
+      stats.masterHits++;
+      
+      const duration = Date.now() - startTime;
+      updateAvgResponseTime(duration);
+      
+      return res.json({
+        ...cachedMaster,
+        metadata: {
+          ...cachedMaster.metadata,
+          cached: true,
+          cacheType: 'master',
+          responseTime: duration + 'ms',
+          timestamp: new Date().toISOString()
+        }
+      });
+    }
+    
+    // ========================================
+    // PASO 2: Verificar caché AI (1h)
+    // ========================================
+    
+    let cachedAI = aiCache.get(cacheKey);
+    if (cachedAI) {
+      stats.cacheHits++;
+      stats.aiHits++;
+      
+      const duration = Date.now() - startTime;
+      updateAvgResponseTime(duration);
+      
+      return res.json({
+        ...cachedAI,
+        metadata: {
+          ...cachedAI.metadata,
+          cached: true,
+          cacheType: 'ai',
+          responseTime: duration + 'ms',
+          timestamp: new Date().toISOString()
+        }
+      });
+    }
+    
+    // ========================================
+    // PASO 3: Cache MISS - Llamar a n8n
+    // ========================================
+    
+    stats.cacheMisses++;
+    
+    console.log(`[CACHE MISS] Calling n8n for: ${normalizedQuery}`);
+    
+    const n8nResponse = await axios.get(N8N_WEBHOOK_URL, {
+      params: { q: normalizedQuery },
+      timeout: 30000, // 30 segundos
+      headers: {
+        'User-Agent': 'ELIMFILTERS-Express-Proxy/1.0'
+      }
+    });
+    
+    const result = n8nResponse.data;
+    const duration = Date.now() - startTime;
+    updateAvgResponseTime(duration);
+    
+    // ========================================
+    // PASO 4: Determinar tipo de respuesta
+    // ========================================
+    
+    const isHomologated = result.homologated === true || 
+                          result.source === 'master' ||
+                          result.metadata?.source === 'master';
+    
+    // ========================================
+    // PASO 5: Cachear según tipo
+    // ========================================
+    
+    if (isHomologated) {
+      // Código homologado → Caché 24h
+      masterCache.set(cacheKey, result);
+      stats.masterHits++;
+      
+      console.log(`[MASTER] Cached for 24h: ${normalizedQuery}`);
+    } else {
+      // Código generado por IA → Caché 1h
+      aiCache.set(cacheKey, result);
+      stats.aiHits++;
+      
+      console.log(`[AI] Cached for 1h: ${normalizedQuery}`);
+    }
+    
+    // ========================================
+    // PASO 6: Retornar con metadata
+    // ========================================
+    
+    return res.json({
+      ...result,
+      metadata: {
+        ...result.metadata,
+        cached: false,
+        source: isHomologated ? 'master' : 'ai',
+        precision: isHomologated ? 'exact' : 'generated',
+        responseTime: duration + 'ms',
+        cacheExpiry: isHomologated ? '24h' : '1h',
+        timestamp: new Date().toISOString()
+      }
+    });
+    
+  } catch (error) {
+    stats.errors++;
+    
+    console.error('[ERROR]', error.message);
+    
+    // Error handling detallado
+    if (error.code === 'ECONNABORTED') {
+      return res.status(504).json({
+        error: true,
+        message: 'Request timeout: n8n workflow took too long',
+        code: 'TIMEOUT'
+      });
+    }
+    
+    if (error.response) {
+      // Error de n8n
+      return res.status(error.response.status).json({
+        error: true,
+        message: 'n8n workflow error',
+        details: error.response.data,
+        code: 'N8N_ERROR'
+      });
+    }
+    
+    // Error genérico
+    return res.status(500).json({
+      error: true,
+      message: 'Internal server error',
+      code: 'INTERNAL_ERROR',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+// ============================================
 // MANEJO DE ERRORES GLOBAL
-// ============================================================================
-app.use((error, req, res, next) => {
-    console.error('[GLOBAL ERROR HANDLER]', error);
-    res.status(error.status || 500).json({
-        error: 'UNHANDLED_ERROR',
-        message: 'Error no controlado en el servidor',
-        ...(process.env.NODE_ENV === 'development' && { details: error.message })
-    });
+// ============================================
+
+// 404 Handler
+app.use((req, res) => {
+  res.status(404).json({
+    error: true,
+    message: 'Endpoint not found',
+    availableEndpoints: [
+      'GET /health',
+      'GET /api/search?q={code}',
+      'GET /api/stats',
+      'POST /api/cache/clear'
+    ]
+  });
 });
 
-// ============================================================================
-// GRACEFUL SHUTDOWN
-// ============================================================================
+// Error Handler
+app.use((err, req, res, next) => {
+  console.error('[GLOBAL ERROR]', err);
+  
+  res.status(500).json({
+    error: true,
+    message: 'Unexpected error',
+    details: process.env.NODE_ENV === 'development' ? err.message : undefined
+  });
+});
+
+// ============================================
+// INICIO DEL SERVIDOR
+// ============================================
+
+app.listen(PORT, () => {
+  console.log(`
+╔════════════════════════════════════════════╗
+║   🚀 ELIMFILTERS EXPRESS PROXY ACTIVO      ║
+╠════════════════════════════════════════════╣
+║  Puerto: ${PORT.toString().padEnd(35)}║
+║  n8n: ${(N8N_WEBHOOK_URL.length > 30 ? '...' + N8N_WEBHOOK_URL.slice(-27) : N8N_WEBHOOK_URL).padEnd(35)}║
+║  Caché Master: 24h                         ║
+║  Caché AI: 1h                              ║
+╚════════════════════════════════════════════╝
+  `);
+  
+  console.log('📊 Endpoints disponibles:');
+  console.log('  GET  /health');
+  console.log('  GET  /api/search?q={code}');
+  console.log('  GET  /api/stats');
+  console.log('  POST /api/cache/clear');
+  console.log('');
+});
+
+// Graceful shutdown
 process.on('SIGTERM', () => {
-    console.log('[SHUTDOWN] SIGTERM recibido. Cerrando servidor...');
-    server.close(() => {
-        console.log('[SHUTDOWN] Servidor cerrado');
-        process.exit(0);
-    });
+  console.log('SIGTERM received, shutting down gracefully...');
+  masterCache.close();
+  aiCache.close();
+  process.exit(0);
 });
 
 process.on('SIGINT', () => {
-    console.log('[SHUTDOWN] SIGINT recibido. Cerrando servidor...');
-    server.close(() => {
-        console.log('[SHUTDOWN] Servidor cerrado');
-        process.exit(0);
-    });
+  console.log('SIGINT received, shutting down gracefully...');
+  masterCache.close();
+  aiCache.close();
+  process.exit(0);
 });
-
-// ============================================================================
-// INICIO DEL SERVIDOR
-// ============================================================================
-const server = app.listen(PORT, () => {
-    console.log(`[STARTUP] ✓ ELIMFILTERS Proxy API (Modo Híbrido) escuchando en puerto ${PORT}`);
-    console.log(`[STARTUP] ✓ Health check: http://localhost:${PORT}/health`);
-    console.log(`[STARTUP] ✓ Webhook Proxy: POST http://localhost:${PORT}/webhook/filter-query`);
-});
-
-process.on('uncaughtException', (error) => {
-    console.error('[UNCAUGHT EXCEPTION]', error);
-    process.exit(1);
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-    console.error('[UNHANDLED REJECTION]', reason);
-    process.exit(1);
-});
-
-module.exports = app;
