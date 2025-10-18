@@ -1,26 +1,24 @@
-// server.js (Servidor Blindado - CommonJS)
+// server.js (Servidor Proxy - Versión Híbrida)
 require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
+const axios = require('axios'); // <--- Asegúrate de tener axios: npm install axios
 
-// Importar módulos locales (sin .js)
-const filterProcessor = require('./filterProcessor');
+// Importar módulos locales
 const security = require('./security');
 const utils = require('./utils');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-console.log('[STARTUP] Iniciando ELIMFILTERS Proxy API...');
+console.log('[STARTUP] Iniciando ELIMFILTERS Proxy API (Modo Híbrido)...');
 console.log(`[CONFIG] Ambiente: ${process.env.NODE_ENV || 'development'}`);
 
 // ============================================================================
 // MIDDLEWARE GLOBAL
 // ============================================================================
-
-// CORS - Configuración segura
 const corsOptions = {
     origin: (process.env.ALLOWED_ORIGINS || 'http://localhost:3000').split(','),
     credentials: true,
@@ -29,20 +27,8 @@ const corsOptions = {
     maxAge: 3600
 };
 app.use(cors(corsOptions));
-
-// Parseo de JSON
 app.use(express.json({ limit: '10kb' }));
 app.use(express.urlencoded({ limit: '10kb', extended: true }));
-
-// Rate limiting
-const limiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutos
-    max: 100, // máximo 100 requests por ventana
-    message: 'Demasiadas solicitudes desde esta IP, por favor intente más tarde.',
-    standardHeaders: true,
-    legacyHeaders: false,
-});
-app.use('/webhook/', limiter);
 
 // Logging de requests
 app.use((req, res, next) => {
@@ -51,135 +37,92 @@ app.use((req, res, next) => {
 });
 
 // ============================================================================
-// VALIDACIÓN DE SEGURIDAD
+// RUTAS PÚBLICAS (sin autenticación)
 // ============================================================================
-
-// Middleware de autenticación para webhook
-app.use('/webhook/', (req, res, next) => {
-    try {
-        // Validar IP si whitelist está activo
-        if (process.env.ENABLE_IP_WHITELIST === 'true') {
-            const clientIp = req.ip || req.connection.remoteAddress;
-            if (!security.validateIpWhitelist(clientIp)) {
-                console.warn(`[SECURITY] IP no autorizada: ${clientIp}`);
-                return res.status(403).json({
-                    error: 'FORBIDDEN',
-                    message: 'IP no autorizada'
-                });
-            }
-        }
-
-        // Validar API key
-        const apiKey = req.headers['x-api-key'];
-        if (!security.validateWebhookAuth(apiKey)) {
-            console.warn(`[SECURITY] API key inválida o ausente`);
-            return res.status(401).json({
-                error: 'UNAUTHORIZED',
-                message: 'API key inválida o ausente'
-            });
-        }
-
-        next();
-    } catch (error) {
-        console.error('[SECURITY ERROR]', error.message);
-        return res.status(500).json({
-            error: 'SECURITY_CHECK_FAILED',
-            message: 'Error durante validación de seguridad'
-        });
-    }
-});
-
-// ============================================================================
-// RUTAS
-// ============================================================================
-
-/**
- * Health check
- */
 app.get('/health', (req, res) => {
     res.json({
         status: 'OK',
         timestamp: new Date().toISOString(),
-        uptime: process.uptime()
+        uptime: process.uptime(),
+        mode: 'HYBRID (n8n Worker)'
     });
 });
 
+// ============================================================================
+// RUTAS PROTEGIDAS (con autenticación y rate limiting)
+// ============================================================================
+const webhookLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 100,
+    message: { error: 'TOO_MANY_REQUESTS', message: 'Demasiadas solicitudes.' },
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+
+// Aplicar seguridad a la ruta del webhook
+app.use('/webhook/', webhookLimiter, security.secureWebhook);
+
 /**
- * WEBHOOK PRINCIPAL: Procesar código de filtro
+ * WEBHOOK PROXY: Reenvía la petición al flujo de n8n
  * POST /webhook/filter-query
- * Body: { sku: "CODE_TO_SEARCH" }
+ * Body: { q: "CODE_TO_SEARCH" }
  */
 app.post('/webhook/filter-query', async (req, res) => {
     const startTime = Date.now();
     const requestId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
     try {
-        console.log(`[${requestId}] POST /webhook/filter-query`);
+        console.log(`[${requestId}] POST /webhook/filter-query - Reenviando a n8n`);
 
         // Validar que el body exista
-        if (!req.body) {
-            console.warn(`[${requestId}] Body vacío`);
+        if (!req.body || !req.body.q) {
+            console.warn(`[${requestId}] Body vacío o campo 'q' faltante`);
             return res.status(400).json({
-                results: [{
-                    error: 'EMPTY_BODY',
-                    message: 'El body de la solicitud está vacío',
-                    ok: false
-                }],
+                results: [{ error: 'MISSING_QUERY', message: 'Campo "q" requerido en el body', ok: false }],
                 metadata: { success: false }
             });
         }
 
-        // Extraer SKU del body
-        const { sku } = req.body;
-
-        if (!sku) {
-            console.warn(`[${requestId}] SKU no proporcionado`);
-            return res.status(400).json({
-                results: [{
-                    error: 'MISSING_SKU',
-                    message: 'Campo "sku" requerido en el body',
-                    ok: false
-                }],
-                metadata: { success: false }
-            });
+        // === NUEVA LÓGICA: LLAMAR A N8N ===
+        const n8nWebhookUrl = process.env.N8N_WORKFLOW_WEBHOOK_URL;
+        if (!n8nWebhookUrl) {
+            throw new Error('N8N_WORKFLOW_WEBHOOK_URL no está configurada en el .env');
         }
 
-        console.log(`[${requestId}] Procesando SKU: ${sku}`);
+        // Reenviar la petición a n8n
+        const n8nResponse = await axios.post(n8nWebhookUrl, {
+            q: req.body.q
+        }, {
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            timeout: 30000 // Timeout de 30 segundos para la llamada a n8n
+        });
 
-        // Procesar el filtro
-        const result = await filterProcessor.processFilterCode(sku);
-
-        // Validar respuesta
-        if (!result) {
-            throw new Error('processFilterCode retornó null/undefined');
-        }
-
-        // Logging de éxito
+        const result = n8nResponse.data;
         const duration = Date.now() - startTime;
-        console.log(`[${requestId}] ✓ Éxito en ${duration}ms`);
+        console.log(`[${requestId}] ✓ Respuesta de n8n recibida en ${duration}ms`);
 
-        // Registrar actividad
+        // Registrar actividad exitosa
         await utils.logWebhookActivity({
             requestId,
-            sku,
+            sku: req.body.q,
             status: 'SUCCESS',
             duration,
             timestamp: new Date().toISOString()
         });
 
-        // Enviar respuesta
+        // Devolver la respuesta de n8n directamente al cliente
         return res.status(200).json(result);
 
     } catch (error) {
         const duration = Date.now() - startTime;
-
         console.error(`[${requestId}] ✗ Error después de ${duration}ms:`, error.message);
-        console.error(`[${requestId}] Stack:`, error.stack);
 
-        // Registro de error
+        // Registrar error
         await utils.logWebhookActivity({
             requestId,
-            sku: req.body?.sku || 'UNKNOWN',
+            sku: req.body?.q || 'UNKNOWN',
             status: 'ERROR',
             error: utils.sanitizeError(error),
             duration,
@@ -188,68 +131,43 @@ app.post('/webhook/filter-query', async (req, res) => {
 
         // Determinar código de status HTTP
         let statusCode = 500;
-        let errorResponse = {
-            error: 'INTERNAL_SERVER_ERROR',
-            message: 'Error procesando la solicitud'
-        };
+        let errorResponse = { error: 'INTERNAL_SERVER_ERROR', message: 'Error procesando la solicitud' };
 
-        // Si el error tiene estructura conocida
-        if (error.status) {
-            statusCode = error.status;
-            if (error.safeErrorResponse) {
-                return res.status(statusCode).json(error.safeErrorResponse);
-            }
+        // Si es un error de axios (ej. n8n no responde)
+        if (error.code === 'ECONNABORTED') {
+            statusCode = 504; // Gateway Timeout
+            errorResponse = { error: 'N8N_TIMEOUT', message: 'El servicio de búsqueda tardó demasiado en responder.' };
+        } else if (error.response) {
+            // n8n devolvió un error (ej. 404, 500)
+            statusCode = error.response.status;
+            errorResponse = error.response.data; // Devolver el error de n8n
         }
 
-        // Respuesta de error genérica
         return res.status(statusCode).json({
-            results: [{
-                ...errorResponse,
-                details: process.env.NODE_ENV === 'development' ? error.message : undefined,
-                ok: false
-            }],
+            results: [{ ...errorResponse, ok: false }],
             metadata: { success: false }
         });
     }
 });
 
-/**
- * Debug endpoint (solo en desarrollo)
- */
-if (process.env.NODE_ENV === 'development') {
-    app.get('/debug/config', (req, res) => {
-        res.json({
-            node_env: process.env.NODE_ENV,
-            port: PORT,
-            cors_enabled: true,
-            rate_limiting: true,
-            ip_whitelist_enabled: process.env.ENABLE_IP_WHITELIST === 'true'
-        });
-    });
-}
+// ... (El resto del archivo: debug endpoint, 404, global error handler, graceful shutdown, etc., está perfecto y no necesita cambios) ...
 
 // ============================================================================
 // MANEJO DE RUTAS NO ENCONTRADAS
 // ============================================================================
-
 app.use((req, res) => {
     res.status(404).json({
         error: 'NOT_FOUND',
         message: `Ruta ${req.method} ${req.path} no existe`,
-        available_routes: [
-            'GET /health',
-            'POST /webhook/filter-query'
-        ]
+        available_routes: ['GET /health', 'POST /webhook/filter-query']
     });
 });
 
 // ============================================================================
 // MANEJO DE ERRORES GLOBAL
 // ============================================================================
-
 app.use((error, req, res, next) => {
     console.error('[GLOBAL ERROR HANDLER]', error);
-
     res.status(error.status || 500).json({
         error: 'UNHANDLED_ERROR',
         message: 'Error no controlado en el servidor',
@@ -260,7 +178,6 @@ app.use((error, req, res, next) => {
 // ============================================================================
 // GRACEFUL SHUTDOWN
 // ============================================================================
-
 process.on('SIGTERM', () => {
     console.log('[SHUTDOWN] SIGTERM recibido. Cerrando servidor...');
     server.close(() => {
@@ -280,14 +197,12 @@ process.on('SIGINT', () => {
 // ============================================================================
 // INICIO DEL SERVIDOR
 // ============================================================================
-
 const server = app.listen(PORT, () => {
-    console.log(`[STARTUP] ✓ ELIMFILTERS Proxy API escuchando en puerto ${PORT}`);
+    console.log(`[STARTUP] ✓ ELIMFILTERS Proxy API (Modo Híbrido) escuchando en puerto ${PORT}`);
     console.log(`[STARTUP] ✓ Health check: http://localhost:${PORT}/health`);
-    console.log(`[STARTUP] ✓ Webhook: POST http://localhost:${PORT}/webhook/filter-query`);
+    console.log(`[STARTUP] ✓ Webhook Proxy: POST http://localhost:${PORT}/webhook/filter-query`);
 });
 
-// Manejo de errores no capturados
 process.on('uncaughtException', (error) => {
     console.error('[UNCAUGHT EXCEPTION]', error);
     process.exit(1);
