@@ -15,8 +15,8 @@ app.use(express.json({ limit: '10mb' }));
 
 // Rate limiting
 const limiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutos
-    max: 100 // límite de 100 requests por IP
+    windowMs: 15 * 60 * 1000,
+    max: 100
 });
 app.use('/api/', limiter);
 
@@ -28,20 +28,17 @@ app.use((req, res, next) => {
 
 // Inicializar Google Sheets
 let sheetsService = null;
-const SPREADSHEET_ID = process.env.GOOGLE_SHEET_ID || '1Aq-Aq-Aq-Aq-Aq-Aq-Aq-Aq-Aq-Aq-Aq';
 
 async function initializeSheets() {
     try {
-        sheetsService = new GoogleSheetsService(SPREADSHEET_ID);
+        sheetsService = new GoogleSheetsService();
         await sheetsService.initialize();
         console.log('✓ Google Sheets initialized successfully');
     } catch (error) {
         console.error('✗ Error initializing Google Sheets:', error.message);
-        // No lanzar error, permitir que el servidor arranque
     }
 }
 
-// Inicializar al arrancar
 initializeSheets();
 
 // ============ ENDPOINTS ============
@@ -62,12 +59,11 @@ app.get('/api/products', async (req, res) => {
         if (!sheetsService) {
             return res.status(503).json({
                 success: false,
-                error: 'Google Sheets not initialized',
-                message: 'Service temporarily unavailable'
+                error: 'Google Sheets not initialized'
             });
         }
 
-        const products = await sheetsService.getAllProducts();
+        const products = await sheetsService.getProducts();
         res.json({
             success: true,
             count: products.length,
@@ -83,15 +79,15 @@ app.get('/api/products', async (req, res) => {
     }
 });
 
-// Buscar productos
-app.post('/api/search', async (req, res) => {
+// Buscar productos por query
+app.get('/api/products/search', async (req, res) => {
     try {
-        const { query } = req.body;
+        const { query } = req.query;
 
         if (!query) {
             return res.status(400).json({
                 success: false,
-                error: 'Query is required'
+                error: 'Query parameter is required'
             });
         }
 
@@ -102,17 +98,7 @@ app.post('/api/search', async (req, res) => {
             });
         }
 
-        const allProducts = await sheetsService.getAllProducts();
-        
-        // Búsqueda simple por nombre, marca o categoría
-        const results = allProducts.filter(product => {
-            const searchTerm = query.toLowerCase();
-            return (
-                product.name?.toLowerCase().includes(searchTerm) ||
-                product.brand?.toLowerCase().includes(searchTerm) ||
-                product.category?.toLowerCase().includes(searchTerm)
-            );
-        });
+        const results = await sheetsService.searchProducts(query);
 
         res.json({
             success: true,
@@ -130,8 +116,8 @@ app.post('/api/search', async (req, res) => {
     }
 });
 
-// Obtener producto por ID
-app.get('/api/products/:id', async (req, res) => {
+// Buscar por código OEM
+app.get('/api/products/oem/:code', async (req, res) => {
     try {
         if (!sheetsService) {
             return res.status(503).json({
@@ -140,8 +126,7 @@ app.get('/api/products/:id', async (req, res) => {
             });
         }
 
-        const products = await sheetsService.getAllProducts();
-        const product = products.find(p => p.id === req.params.id);
+        const product = await sheetsService.getProductByOEM(req.params.code);
 
         if (!product) {
             return res.status(404).json({
@@ -184,6 +169,6 @@ app.use((err, req, res, next) => {
 });
 
 // Iniciar servidor
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 ElimFilters API running on port ${PORT}`);
 });
