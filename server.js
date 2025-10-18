@@ -1,51 +1,63 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const { google } = require('googleapis');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+const { GoogleSheetsService } = require('./googleSheetsConnector');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
 
-// Middleware
+// Middleware de seguridad
+app.use(helmet());
 app.use(cors());
 app.use(express.json());
 
-// Google Sheets setup
-const SHEET_ID = process.env.GOOGLE_SHEET_ID;
-let sheets;
-let isInitialized = false;
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  max: 100 // límite de 100 requests por IP
+});
+app.use('/api/', limiter);
 
-async function initializeGoogleSheets() {
+// Inicializar Google Sheets
+let sheetsService;
+(async () => {
   try {
-    const auth = new google.auth.GoogleAuth({
-      credentials: {
-        client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-        private_key: process.env.GOOGLE_SHEETS_CREDS_BASE64 
-          ? Buffer.from(process.env.GOOGLE_SHEETS_CREDS_BASE64, 'base64').toString('utf-8')
-          : process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n')
-      },
-      scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly']
-    });
-
-    sheets = google.sheets({ version: 'v4', auth });
-    isInitialized = true;
+    sheetsService = new GoogleSheetsService();
+    await sheetsService.initialize();
     console.log('✓ Google Sheets initialized');
   } catch (error) {
-    console.error('Google Sheets init error:', error.message);
+    console.error('✗ Error initializing Google Sheets:', error.message);
   }
+})();
+
+// ============================================
+// UTILIDADES
+// ============================================
+
+// Normalizar código de búsqueda
+function normalizeCode(code) {
+  if (!code) return '';
+  return code.toString()
+    .toUpperCase()
+    .trim()
+    .replace(/[^A-Z0-9]/g, ''); // Solo letras y números
 }
+
+// Validar que sea un código válido
+function isValidCode(code) {
+  const normalized = normalizeCode(code);
+  // Debe tener al menos 3 caracteres alfanuméricos
+  return normalized.length >= 3 && /[A-Z0-9]{3,}/.test(normalized);
+}
+
+// ============================================
+// ENDPOINTS
+// ============================================
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    initialized: isInitialized,
-    timestamp: new Date().toISOString()
-  });
-});
-
-// Root
-app.get('/', (req, res) => {
   res.json({
     name: 'ElimFilters API',
     version: '2.0.0',
@@ -53,100 +65,133 @@ app.get('/', (req, res) => {
   });
 });
 
-// Search endpoint
+// Búsqueda de homologación (SOLO POR CÓDIGO)
 app.post('/api/search', async (req, res) => {
   try {
     const { query } = req.body;
-    
+
+    // Validación: código es requerido
     if (!query) {
-      return res.status(400).json({ error: 'Query required' });
+      return res.status(400).json({
+        success: false,
+        error: 'El código es requerido',
+        message: 'Por favor ingresa un código de producto (ej: WIX51515, PH3593A, etc.)'
+      });
     }
 
-    if (!isInitialized) {
-      return res.status(503).json({ error: 'Service not ready' });
+    // Validación: formato de código
+    if (!isValidCode(query)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Código inválido',
+        message: 'El código debe tener al menos 3 caracteres alfanuméricos'
+      });
     }
 
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: 'A:Z'
+    const normalizedQuery = normalizeCode(query);
+
+    // Buscar en Google Sheets
+    const allProducts = await sheetsService.getAllProducts();
+    
+    // Buscar coincidencias en TODAS las columnas de códigos
+    const matches = allProducts.filter(product => {
+      // Buscar en código principal
+      if (normalizeCode(product.codigo) === normalizedQuery) return true;
+      
+      // Buscar en códigos alternativos (si existen)
+      if (product.codigosAlternativos) {
+        const altCodes = product.codigosAlternativos.split(',');
+        return altCodes.some(code => normalizeCode(code) === normalizedQuery);
+      }
+      
+      return false;
     });
 
-    const rows = response.data.values || [];
-    const headers = rows[0] || [];
-    const data = rows.slice(1);
-
-    // Simple search
-    const results = data
-      .filter(row => 
-        row.some(cell => 
-          cell && cell.toString().toLowerCase().includes(query.toLowerCase())
-        )
-      )
-      .slice(0, 10)
-      .map(row => {
-        const obj = {};
-        headers.forEach((header, i) => {
-          obj[header] = row[i] || '';
-        });
-        return obj;
+    if (matches.length === 0) {
+      return res.json({
+        success: false,
+        message: 'No se encontraron homologaciones para este código',
+        query: query,
+        normalizedQuery: normalizedQuery
       });
+    }
 
+    // Retornar resultados
     res.json({
       success: true,
-      query,
-      count: results.length,
-      results
+      query: query,
+      normalizedQuery: normalizedQuery,
+      totalResults: matches.length,
+      results: matches
     });
 
   } catch (error) {
-    console.error('Search error:', error);
-    res.status(500).json({ error: error.message });
+    console.error('Error en búsqueda:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error interno del servidor',
+      message: error.message
+    });
   }
 });
 
-// Get products
+// Obtener todos los productos
 app.get('/api/products', async (req, res) => {
   try {
-    if (!isInitialized) {
-      return res.status(503).json({ error: 'Service not ready' });
-    }
-
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: 'A:Z'
-    });
-
-    const rows = response.data.values || [];
-    const headers = rows[0] || [];
-    const data = rows.slice(1);
-
-    const products = data.map(row => {
-      const obj = {};
-      headers.forEach((header, i) => {
-        obj[header] = row[i] || '';
-      });
-      return obj;
-    });
-
+    const products = await sheetsService.getAllProducts();
     res.json({
       success: true,
-      count: products.length,
-      products
+      total: products.length,
+      products: products
     });
-
   } catch (error) {
-    console.error('Products error:', error);
-    res.status(500).json({ error: error.message });
+    console.error('Error obteniendo productos:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error obteniendo productos',
+      message: error.message
+    });
   }
 });
 
-// Start server
-async function start() {
-  await initializeGoogleSheets();
-  
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 ElimFilters API running on port ${PORT}`);
-  });
-}
+// Obtener producto por ID
+app.get('/api/products/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const products = await sheetsService.getAllProducts();
+    const product = products.find(p => p.id === id);
 
-start();
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Producto no encontrado'
+      });
+    }
+
+    res.json({
+      success: true,
+      product: product
+    });
+  } catch (error) {
+    console.error('Error obteniendo producto:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error obteniendo producto',
+      message: error.message
+    });
+  }
+});
+
+// Endpoint 404
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    error: 'Endpoint no encontrado',
+    availableEndpoints: ['/health', '/api/search', '/api/products']
+  });
+});
+
+// Iniciar servidor
+app.listen(PORT, () => {
+  console.log(`🚀 ElimFilters API running on port ${PORT}`);
+});
