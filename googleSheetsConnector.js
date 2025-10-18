@@ -1,115 +1,109 @@
 const { google } = require('googleapis');
-const fs = require('fs');
-
-let authClient = null;
-let sheetsAPI = null;
-
-async function initializeAuth() {
-    if (authClient) return authClient;
-
-    try {
-        let credentials;
-
-        // Opción 1: Base64 desde variable de entorno
-        const credsBase64 = process.env.GOOGLE_SHEETS_CREDS_BASE64;
-        if (credsBase64) {
-            credentials = JSON.parse(Buffer.from(credsBase64, 'base64').toString());
-        }
-        // Opción 2: JSON directo
-        else if (process.env.GOOGLE_CREDENTIALS) {
-            credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
-        }
-        // Opción 3: Archivo local (desarrollo)
-        else if (process.env.GOOGLE_SHEETS_CREDS_PATH) {
-            credentials = JSON.parse(fs.readFileSync(process.env.GOOGLE_SHEETS_CREDS_PATH, 'utf8'));
-        }
-        else {
-            throw new Error('No credentials found. Set GOOGLE_SHEETS_CREDS_BASE64, GOOGLE_CREDENTIALS, or GOOGLE_SHEETS_CREDS_PATH');
-        }
-
-        authClient = new google.auth.JWT(
-            credentials.client_email,
-            null,
-            credentials.private_key,
-            ['https://www.googleapis.com/auth/spreadsheets']
-        );
-
-        sheetsAPI = google.sheets({ version: 'v4', auth: authClient });
-        console.log('[SHEETS] ✓ Autenticación inicializada correctamente');
-        return authClient;
-
-    } catch (error) {
-        console.error('[SHEETS] ✗ Error inicializando autenticación:', error.message);
-        throw error;
-    }
-}
 
 class GoogleSheetsService {
-    constructor(spreadsheetId) {
-        this.spreadsheetId = spreadsheetId;
-    }
+  constructor() {
+    this.sheets = null;
+    this.auth = null;
+  }
 
-    async initialize() {
-        await initializeAuth();
-    }
+  async initialize() {
+    try {
+      // Intentar leer credenciales desde GOOGLE_SHEETS_CREDS_BASE64 o GOOGLE_CREDENTIALS
+      let credentials;
+      
+      if (process.env.GOOGLE_SHEETS_CREDS_BASE64) {
+        const base64Creds = process.env.GOOGLE_SHEETS_CREDS_BASE64;
+        const jsonCreds = Buffer.from(base64Creds, 'base64').toString('utf-8');
+        credentials = JSON.parse(jsonCreds);
+      } else if (process.env.GOOGLE_CREDENTIALS) {
+        credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
+      } else {
+        throw new Error('No se encontraron credenciales de Google Sheets');
+      }
 
-    async readRange(range) {
-        try {
-            await this.initialize();
-            const response = await sheetsAPI.spreadsheets.values.get({
-                spreadsheetId: this.spreadsheetId,
-                range: range,
-            });
-            return response.data.values || [];
-        } catch (error) {
-            console.error('[SHEETS] Error reading range:', error.message);
-            throw error;
-        }
-    }
+      this.auth = new google.auth.GoogleAuth({
+        credentials: credentials,
+        scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+      });
 
-    async writeRange(range, values) {
-        try {
-            await this.initialize();
-            const response = await sheetsAPI.spreadsheets.values.update({
-                spreadsheetId: this.spreadsheetId,
-                range: range,
-                valueInputOption: 'RAW',
-                resource: { values },
-            });
-            return response.data;
-        } catch (error) {
-            console.error('[SHEETS] Error writing range:', error.message);
-            throw error;
-        }
+      this.sheets = google.sheets({ version: 'v4', auth: this.auth });
+      console.log('✅ Google Sheets initialized successfully');
+      return true;
+    } catch (error) {
+      console.error('❌ Error initializing Google Sheets:', error.message);
+      throw error;
     }
+  }
 
-    async appendRow(range, values) {
-        try {
-            await this.initialize();
-            const response = await sheetsAPI.spreadsheets.values.append({
-                spreadsheetId: this.spreadsheetId,
-                range: range,
-                valueInputOption: 'RAW',
-                resource: { values: [values] },
-            });
-            return response.data;
-        } catch (error) {
-            console.error('[SHEETS] Error appending row:', error.message);
-            throw error;
-        }
-    }
+  async getProducts() {
+    try {
+      const spreadsheetId = process.env.GOOGLE_SHEET_ID;
+      const range = 'Master!A2:O'; // Cambiado de Products a Master
 
-    async getAllProducts() {
-        const data = await this.readRange('Products!A2:Z');
-        return data.map(row => ({
-            id: row[0],
-            name: row[1],
-            brand: row[2],
-            category: row[3],
-            price: parseFloat(row[4]) || 0,
-            stock: parseInt(row[5]) || 0,
-        }));
+      const response = await this.sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range,
+      });
+
+      const rows = response.data.values || [];
+      
+      const products = rows.map(row => ({
+        query_norm: row[0] || '',
+        sku: row[1] || '',
+        oem_codes: row[2] || '',
+        cross_reference: row[3] || '',
+        filter_type: row[4] || '',
+        media_type: row[5] || '',
+        subtype: row[6] || '',
+        engine_applications: row[7] || '',
+        equipment: row[8] || '',
+        applications: row[9] || '',
+        height_mm: row[10] || '',
+        outer_diameter_mm: row[11] || '',
+        thread_size: row[12] || '',
+        gasket_od_mm: row[13] || '',
+        gasket_id_mm: row[14] || '',
+      }));
+
+      return products;
+    } catch (error) {
+      console.error('Error getting products:', error);
+      throw error;
     }
+  }
+
+  async searchProducts(query) {
+    try {
+      const products = await this.getProducts();
+      const normalizedQuery = query.toLowerCase().trim();
+
+      return products.filter(product => {
+        return (
+          product.query_norm.toLowerCase().includes(normalizedQuery) ||
+          product.sku.toLowerCase().includes(normalizedQuery) ||
+          product.oem_codes.toLowerCase().includes(normalizedQuery) ||
+          product.cross_reference.toLowerCase().includes(normalizedQuery)
+        );
+      });
+    } catch (error) {
+      console.error('Error searching products:', error);
+      throw error;
+    }
+  }
+
+  async getProductByOEM(oemCode) {
+    try {
+      const products = await this.getProducts();
+      const normalizedOEM = oemCode.toLowerCase().trim();
+
+      return products.find(product => 
+        product.oem_codes.toLowerCase().includes(normalizedOEM)
+      );
+    } catch (error) {
+      console.error('Error getting product by OEM:', error);
+      throw error;
+    }
+  }
 }
 
 module.exports = GoogleSheetsService;
