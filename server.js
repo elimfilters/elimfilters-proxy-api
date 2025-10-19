@@ -1,297 +1,258 @@
-require('dotenv').config();
+// server.js
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-const { google } = require('googleapis');
+require('dotenv').config();
+
+const googleSheetsConnector = require('./googleSheetsConnector');
 const businessLogic = require('./businessLogic');
+const detectionService = require('./detectionService');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8000;
 
-// Middleware
+// Middlewares
 app.use(helmet());
 app.use(cors());
 app.use(express.json());
 
+// Rate limiting
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100
+    windowMs: 15 * 60 * 1000, // 15 minutos
+    max: 100 // límite de 100 requests por ventana
 });
-app.use('/api/', limiter);
+app.use(limiter);
 
-// Google Sheets Setup
-let sheets;
-let auth;
+// ============================================================================
+// ENDPOINTS
+// ============================================================================
 
-async function initializeGoogleSheets() {
-  try {
-    const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS || '{}');
-    
-    auth = new google.auth.GoogleAuth({
-      credentials: credentials,
-      scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
+// Health check
+app.get('/', (req, res) => {
+    res.json({
+        status: 'online',
+        message: 'ELIMFILTERS API v1.0',
+        endpoints: [
+            '/api/products',
+            '/api/search',
+            '/api/filters',
+            '/api/generate-sku',
+            '/api/detect-filter'
+        ]
     });
+});
 
-    sheets = google.sheets({ version: 'v4', auth });
-    console.log('✅ Google Sheets initialized');
-  } catch (error) {
-    console.error('❌ Google Sheets initialization failed:', error.message);
-  }
+// Endpoint para detectar filtro
+app.post('/api/detect-filter', async (req, res) => {
+    try {
+        const { query } = req.body;
+        
+        if (!query) {
+            return res.status(400).json({
+                success: false,
+                error: 'Query parameter is required'
+            });
+        }
+        
+        console.log(`🔍 Detectando filtro: ${query}`);
+        const result = await detectionService.detectFilter(query);
+        
+        res.json({
+            success: true,
+            query: query,
+            ...result
+        });
+        
+    } catch (error) {
+        console.error('❌ Error detecting filter:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// Endpoint para generar SKU
+app.post('/api/generate-sku', async (req, res) => {
+    try {
+        const { family, dutyLevel, oemCodes, crossReference } = req.body;
+        
+        // Validación de entrada
+        if (!family || !dutyLevel) {
+            return res.status(400).json({
+                success: false,
+                error: 'family and dutyLevel are required'
+            });
+        }
+        
+        if (!oemCodes && !crossReference) {
+            return res.status(400).json({
+                success: false,
+                error: 'At least oemCodes or crossReference must be provided'
+            });
+        }
+        
+        console.log(`🔧 Generando SKU para: ${family} ${dutyLevel}`);
+        
+        // Generar SKU
+        const sku = businessLogic.generateSKU(
+            family,
+            dutyLevel,
+            oemCodes || [],
+            crossReference || []
+        );
+        
+        // Obtener información adicional
+        const prefix = businessLogic.getElimfiltersPrefix(family, dutyLevel);
+        const baseCode = businessLogic.applyBaseCodeLogic(
+            dutyLevel,
+            family,
+            oemCodes || [],
+            crossReference || []
+        );
+        
+        res.json({
+            success: true,
+            sku: sku,
+            details: {
+                family: family,
+                dutyLevel: dutyLevel,
+                prefix: prefix,
+                digits: baseCode,
+                sourceCode: determineSourceCode(dutyLevel, oemCodes, crossReference)
+            }
+        });
+        
+    } catch (error) {
+        console.error('❌ Error generating SKU:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// Función auxiliar para determinar el código fuente usado
+function determineSourceCode(dutyLevel, oemCodes, crossReference) {
+    if (dutyLevel === 'HD') {
+        const donaldson = businessLogic.findDonaldsonCode(crossReference);
+        if (donaldson) return { type: 'Donaldson', code: donaldson };
+    } else if (dutyLevel === 'LD') {
+        const fram = businessLogic.findFramCode(crossReference);
+        if (fram) return { type: 'Fram', code: fram };
+    }
+    
+    const oem = businessLogic.getMostCommonOEM(oemCodes);
+    return { type: 'OEM', code: oem };
 }
 
-// Routes
-app.get('/', (req, res) => {
-  res.json({ 
-    status: 'online',
-    message: 'ELIMFILTERS API v1.0',
-    endpoints: ['/api/products', '/api/search', '/api/filters', '/api/generate-sku']
-  });
-});
-
+// Endpoint para obtener productos
 app.get('/api/products', async (req, res) => {
-  try {
-    if (!sheets) {
-      return res.status(503).json({ error: 'Google Sheets not initialized' });
+    try {
+        const data = await googleSheetsConnector.readData();
+        res.json({
+            success: true,
+            count: data.length,
+            data: data
+        });
+    } catch (error) {
+        console.error('❌ Error fetching products:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
     }
-
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: 'Master!A2:O',
-    });
-
-    const rows = response.data.values || [];
-    const products = rows.map(row => ({
-      id: row[0],
-      name: row[1],
-      category: row[2],
-      price: row[3],
-      stock: row[4],
-      brand: row[5],
-      model: row[6],
-      description: row[7]
-    }));
-
-    res.json({ success: true, count: products.length, data: products });
-  } catch (error) {
-    console.error('Error fetching products:', error.message);
-    res.status(500).json({ error: 'Failed to fetch products', details: error.message });
-  }
 });
 
-app.post('/api/search', async (req, res) => {
-  try {
-    const { query, filters } = req.body;
-    
-    if (!sheets) {
-      return res.status(503).json({ error: 'Google Sheets not initialized' });
-    }
-
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: 'Master!A2:O',
-    });
-
-    let rows = response.data.values || [];
-    
-    // Apply search query
-    if (query) {
-      const searchLower = query.toLowerCase();
-      rows = rows.filter(row => 
-        row.some(cell => cell && cell.toString().toLowerCase().includes(searchLower))
-      );
-    }
-
-    // Apply filters
-    if (filters) {
-      if (filters.category) {
-        rows = rows.filter(row => row[2] === filters.category);
-      }
-      if (filters.brand) {
-        rows = rows.filter(row => row[5] === filters.brand);
-      }
-      if (filters.minPrice) {
-        rows = rows.filter(row => parseFloat(row[3]) >= parseFloat(filters.minPrice));
-      }
-      if (filters.maxPrice) {
-        rows = rows.filter(row => parseFloat(row[3]) <= parseFloat(filters.maxPrice));
-      }
-    }
-
-    const products = rows.map(row => ({
-      id: row[0],
-      name: row[1],
-      category: row[2],
-      price: row[3],
-      stock: row[4],
-      brand: row[5],
-      model: row[6],
-      description: row[7]
-    }));
-
-    res.json({ success: true, count: products.length, data: products });
-  } catch (error) {
-    console.error('Error searching:', error.message);
-    res.status(500).json({ error: 'Search failed', details: error.message });
-  }
-});
-
-app.get('/api/filters', async (req, res) => {
-  try {
-    if (!sheets) {
-      return res.status(503).json({ error: 'Google Sheets not initialized' });
-    }
-
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: 'Master!A2:O',
-    });
-
-    const rows = response.data.values || [];
-    
-    const categories = [...new Set(rows.map(row => row[2]).filter(Boolean))];
-    const brands = [...new Set(rows.map(row => row[5]).filter(Boolean))];
-
-    res.json({ 
-      success: true, 
-      filters: { categories, brands } 
-    });
-  } catch (error) {
-    console.error('Error fetching filters:', error.message);
-    res.status(500).json({ error: 'Failed to fetch filters', details: error.message });
-  }
-});
-
-// Endpoint robusto para generación de SKU
-app.post('/api/generate-sku', async (req, res) => {
-  try {
-    const { family, dutyLevel, oemCodes, crossReference } = req.body;
-
-    // Validación de entrada
-    if (!family) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Campo requerido: family' 
-      });
-    }
-
-    if (!dutyLevel) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Campo requerido: dutyLevel (HD o LD)' 
-      });
-    }
-
-    if (!oemCodes || !Array.isArray(oemCodes) || oemCodes.length === 0) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Campo requerido: oemCodes (array de códigos OEM)' 
-      });
-    }
-
-    // Generar SKU usando businessLogic
-    const sku = businessLogic.generateSKU(family, dutyLevel, oemCodes, crossReference);
-
-    // Información detallada del proceso
-    const donaldsonCode = businessLogic.findDonaldsonCode(crossReference);
-    const framCode = businessLogic.findFramCode(crossReference);
-    const mostCommonOEM = businessLogic.getMostCommonOEM(oemCodes);
-
-    res.json({
-      success: true,
-      sku: sku,
-      details: {
-        family: family,
-        dutyLevel: dutyLevel,
-        prefix: businessLogic.getElimfiltersPrefix(family),
-        sourceCode: dutyLevel === 'HD' 
-          ? (donaldsonCode || mostCommonOEM)
-          : dutyLevel === 'LD'
-          ? (framCode || mostCommonOEM)
-          : mostCommonOEM,
-        donaldsonFound: !!donaldsonCode,
-        framFound: !!framCode,
-        usedFallback: dutyLevel === 'HD' ? !donaldsonCode : dutyLevel === 'LD' ? !framCode : false
-      },
-      timestamp: new Date().toISOString()
-    });
-
-  } catch (error) {
-    console.error('Error generating SKU:', error.message);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Failed to generate SKU', 
-      details: error.message 
-    });
-  }
-});
-
-// Endpoint para validar y procesar datos de filtro completos
-app.post('/api/process-filter', async (req, res) => {
-  try {
-    const { family, specs, oemCodes, crossReference, rawData } = req.body;
-
-    // Validación de entrada
-    if (!rawData) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Campo requerido: rawData (datos maestros del filtro)' 
-      });
-    }
-
-    // Procesar datos del filtro con validación completa
-    const processedData = businessLogic.processFilterData(
-      family, 
-      specs, 
-      oemCodes, 
-      crossReference, 
-      rawData
-    );
-
-    // Generar SKU si no existe en rawData
-    let generatedSKU = null;
-    if (processedData.duty_level && oemCodes) {
-      try {
-        generatedSKU = businessLogic.generateSKU(
-          family || rawData.family,
-          processedData.duty_level,
-          oemCodes,
-          crossReference
+// Endpoint para buscar filtros
+app.get('/api/search', async (req, res) => {
+    try {
+        const { q } = req.query;
+        
+        if (!q) {
+            return res.status(400).json({
+                success: false,
+                error: 'Query parameter "q" is required'
+            });
+        }
+        
+        const allData = await googleSheetsConnector.readData();
+        const results = allData.filter(item => 
+            JSON.stringify(item).toLowerCase().includes(q.toLowerCase())
         );
-      } catch (skuError) {
-        console.warn('SKU generation warning:', skuError.message);
-      }
+        
+        res.json({
+            success: true,
+            query: q,
+            count: results.length,
+            data: results
+        });
+        
+    } catch (error) {
+        console.error('❌ Error searching:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
     }
-
-    res.json({
-      success: true,
-      data: processedData,
-      generatedSKU: generatedSKU,
-      timestamp: new Date().toISOString()
-    });
-
-  } catch (error) {
-    console.error('Error processing filter:', error.message);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Failed to process filter data', 
-      details: error.message 
-    });
-  }
 });
 
-// 404 handler
-app.use((req, res) => {
-  res.status(404).json({ error: 'Endpoint not found' });
+// Endpoint para obtener filtros por familia
+app.get('/api/filters', async (req, res) => {
+    try {
+        const { family, dutyLevel } = req.query;
+        
+        const allData = await googleSheetsConnector.readData();
+        let results = allData;
+        
+        if (family) {
+            results = results.filter(item => 
+                item.family && item.family.toUpperCase() === family.toUpperCase()
+            );
+        }
+        
+        if (dutyLevel) {
+            results = results.filter(item => 
+                item.duty_level && item.duty_level.toUpperCase() === dutyLevel.toUpperCase()
+            );
+        }
+        
+        res.json({
+            success: true,
+            filters: { family, dutyLevel },
+            count: results.length,
+            data: results
+        });
+        
+    } catch (error) {
+        console.error('❌ Error filtering:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
 });
 
-// Start server
+// ============================================================================
+// INICIALIZACIÓN
+// ============================================================================
+
 async function startServer() {
-  await initializeGoogleSheets();
-  
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-  });
+    try {
+        // Inicializar Google Sheets
+        await googleSheetsConnector.initialize();
+        console.log('✅ Google Sheets initialized');
+        
+        // Iniciar servidor
+        app.listen(PORT, () => {
+            console.log(`🚀 Server running on port ${PORT}`);
+        });
+        
+    } catch (error) {
+        console.error('❌ Failed to start server:', error);
+        process.exit(1);
+    }
 }
 
 startServer();
