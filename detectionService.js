@@ -1,6 +1,4 @@
-# Crear detectionService.js limpio también
-
-detection_clean = """let sheetsInstance = null;
+let sheetsInstance = null;
 
 function setSheetsInstance(instance) {
     sheetsInstance = instance;
@@ -45,10 +43,10 @@ async function searchInGoogleSheets(query) {
         }
 
         console.log('Searching in Google Sheets:', query);
-        
+
         const queryNorm = query.toUpperCase().trim();
         const result = await sheetsInstance.searchInMaster(queryNorm);
-        
+
         if (result && result.found) {
             console.log('Found in Google Sheets:', result.data.sku);
             return {
@@ -58,7 +56,7 @@ async function searchInGoogleSheets(query) {
                 confidence: 1.0
             };
         }
-        
+
         console.log('Not found in Google Sheets');
         return {
             found: false,
@@ -77,34 +75,34 @@ async function searchInGoogleSheets(query) {
 
 function classifyDutyLevel(context) {
     const contextUpper = context.toUpperCase();
-    
+
     let hdScore = 0;
     let ldScore = 0;
-    
+
     for (const mfg of HD_MANUFACTURERS) {
         if (contextUpper.includes(mfg)) {
             hdScore += 3;
         }
     }
-    
+
     for (const mfg of LD_MANUFACTURERS) {
         if (contextUpper.includes(mfg)) {
             ldScore += 3;
         }
     }
-    
+
     for (const keyword of HD_KEYWORDS) {
         if (contextUpper.includes(keyword)) {
             hdScore += 2;
         }
     }
-    
+
     for (const keyword of LD_KEYWORDS) {
         if (contextUpper.includes(keyword)) {
             ldScore += 2;
         }
     }
-    
+
     if (hdScore > ldScore) {
         return {
             dutyLevel: 'HD',
@@ -132,7 +130,7 @@ function classifyDutyLevel(context) {
 function detectFilterFamily(query, context) {
     context = context || '';
     const combined = (query + ' ' + context).toUpperCase();
-    
+
     const patterns = {
         'OIL': ['OIL', 'ACEITE', 'LUBRICANT', 'LUBRICATION', 'LF', 'P550'],
         'FUEL': ['FUEL', 'COMBUSTIBLE', 'DIESEL', 'GASOLINE', 'FF', 'FS', 'P550'],
@@ -142,9 +140,9 @@ function detectFilterFamily(query, context) {
         'CABIN': ['CABIN', 'CABINA', 'CF', 'HVAC', 'AC'],
         'SEPARATOR': ['SEPARATOR', 'SEPARADOR', 'COALESCER', 'COALESCENTE']
     };
-    
+
     const scores = {};
-    
+
     for (const family in patterns) {
         scores[family] = 0;
         const keywords = patterns[family];
@@ -154,10 +152,10 @@ function detectFilterFamily(query, context) {
             }
         }
     }
-    
+
     let maxScore = 0;
     let detectedFamily = 'UNKNOWN';
-    
+
     for (const family in scores) {
         const score = scores[family];
         if (score > maxScore) {
@@ -165,7 +163,7 @@ function detectFilterFamily(query, context) {
             detectedFamily = family;
         }
     }
-    
+
     return {
         family: detectedFamily,
         confidence: maxScore > 0 ? Math.min(maxScore / 3, 1.0) : 0,
@@ -177,13 +175,13 @@ async function detectFilter(query) {
     try {
         console.log('STARTING FILTER DETECTION');
         console.log('Query:', query);
-        
+
         console.log('STEP 1: Google Sheets Search');
         const sheetsResult = await searchInGoogleSheets(query);
-        
+
         if (sheetsResult.found) {
             console.log('Filter found in database');
-            
+
             return {
                 success: true,
                 source: 'database',
@@ -201,16 +199,16 @@ async function detectFilter(query) {
                 timestamp: new Date().toISOString()
             };
         }
-        
+
         console.log('STEP 2: Pattern Detection');
         console.log('Not found in database, analyzing patterns...');
-        
+
         const familyDetection = detectFilterFamily(query);
         console.log('Detected family:', familyDetection.family, 'confidence:', familyDetection.confidence);
-        
+
         const dutyClassification = classifyDutyLevel(query);
         console.log('Duty Level:', dutyClassification.dutyLevel, 'confidence:', dutyClassification.confidence);
-        
+
         return {
             success: true,
             source: 'pattern_detection',
@@ -232,7 +230,7 @@ async function detectFilter(query) {
             warning: 'Filter not found in database. Results based on pattern detection.',
             timestamp: new Date().toISOString()
         };
-        
+
     } catch (error) {
         console.error('Error in filter detection:', error);
         return {
@@ -251,13 +249,3 @@ module.exports = {
     detectFilterFamily,
     setSheetsInstance
 };
-"""
-
-with open('detectionService.js', 'w', encoding='utf-8') as f:
-    f.write(detection_clean)
-
-print("✅ detectionService.js limpio creado")
-print("\n📝 Características:")
-print("- Sin caracteres especiales")
-print("- Sintaxis estándar JavaScript")
-print("- Compatible con Node.js v20.19.5")
