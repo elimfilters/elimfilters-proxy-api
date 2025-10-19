@@ -19,8 +19,8 @@ app.use(express.json());
 
 // Rate limiting
 const limiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutos
-    max: 100 // límite de 100 requests por ventana
+    windowMs: 15 * 60 * 1000,
+    max: 100
 });
 app.use(limiter);
 
@@ -28,7 +28,6 @@ app.use(limiter);
 // ENDPOINTS
 // ============================================================================
 
-// Health check
 app.get('/', (req, res) => {
     res.json({
         status: 'online',
@@ -43,7 +42,6 @@ app.get('/', (req, res) => {
     });
 });
 
-// Endpoint para detectar filtro
 app.post('/api/detect-filter', async (req, res) => {
     try {
         const { query } = req.body;
@@ -73,12 +71,10 @@ app.post('/api/detect-filter', async (req, res) => {
     }
 });
 
-// Endpoint para generar SKU
 app.post('/api/generate-sku', async (req, res) => {
     try {
         const { family, dutyLevel, oemCodes, crossReference } = req.body;
         
-        // Validación de entrada
         if (!family || !dutyLevel) {
             return res.status(400).json({
                 success: false,
@@ -95,7 +91,6 @@ app.post('/api/generate-sku', async (req, res) => {
         
         console.log(`🔧 Generando SKU para: ${family} ${dutyLevel}`);
         
-        // Generar SKU
         const sku = businessLogic.generateSKU(
             family,
             dutyLevel,
@@ -103,7 +98,6 @@ app.post('/api/generate-sku', async (req, res) => {
             crossReference || []
         );
         
-        // Obtener información adicional
         const prefix = businessLogic.getElimfiltersPrefix(family, dutyLevel);
         const baseCode = businessLogic.applyBaseCodeLogic(
             dutyLevel,
@@ -133,7 +127,6 @@ app.post('/api/generate-sku', async (req, res) => {
     }
 });
 
-// Función auxiliar para determinar el código fuente usado
 function determineSourceCode(dutyLevel, oemCodes, crossReference) {
     if (dutyLevel === 'HD') {
         const donaldson = businessLogic.findDonaldsonCode(crossReference);
@@ -147,7 +140,6 @@ function determineSourceCode(dutyLevel, oemCodes, crossReference) {
     return { type: 'OEM', code: oem };
 }
 
-// Endpoint para obtener productos
 app.get('/api/products', async (req, res) => {
     try {
         const data = await googleSheetsConnector.readData();
@@ -165,7 +157,6 @@ app.get('/api/products', async (req, res) => {
     }
 });
 
-// Endpoint para buscar filtros
 app.get('/api/search', async (req, res) => {
     try {
         const { q } = req.query;
@@ -198,7 +189,6 @@ app.get('/api/search', async (req, res) => {
     }
 });
 
-// Endpoint para obtener filtros por familia
 app.get('/api/filters', async (req, res) => {
     try {
         const { family, dutyLevel } = req.query;
@@ -235,24 +225,10 @@ app.get('/api/filters', async (req, res) => {
 });
 
 // ============================================================================
-// INICIALIZACIÓN
+// INICIALIZACIÓN (SIN initialize)
 // ============================================================================
 
-async function startServer() {
-    try {
-        // Inicializar Google Sheets
-        await googleSheetsConnector.initialize();
-        console.log('✅ Google Sheets initialized');
-        
-        // Iniciar servidor
-        app.listen(PORT, () => {
-            console.log(`🚀 Server running on port ${PORT}`);
-        });
-        
-    } catch (error) {
-        console.error('❌ Failed to start server:', error);
-        process.exit(1);
-    }
-}
-
-startServer();
+app.listen(PORT, () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`✅ ELIMFILTERS API v1.0 - Ready`);
+});
