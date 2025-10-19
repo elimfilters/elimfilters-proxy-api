@@ -1,4 +1,6 @@
-require('dotenv').config();
+# Crear un server.js ULTRA LIMPIO, línea por línea verificada
+
+server_ultra_clean = """require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const GoogleSheetsService = require('./googleSheetsConnector');
@@ -18,10 +20,10 @@ async function initializeServices() {
     sheetsInstance = new GoogleSheetsService();
     await sheetsInstance.initialize();
     detectionService.setSheetsInstance(sheetsInstance);
-    console.log('Services initialized successfully');
+    console.log('Services initialized');
     return true;
   } catch (error) {
-    console.error('Error initializing services:', error);
+    console.error('Init error:', error);
     throw error;
   }
 }
@@ -30,8 +32,8 @@ app.get('/health', (req, res) => {
   res.json({ 
     status: 'ok', 
     timestamp: new Date().toISOString(),
-    service: 'ELIMFILTERS Proxy API',
-    sheetsConnected: sheetsInstance ? true : false
+    service: 'ELIMFILTERS API',
+    sheets: sheetsInstance ? true : false
   });
 });
 
@@ -40,25 +42,21 @@ app.get('/api/products', async (req, res) => {
     if (!sheetsInstance) {
       return res.status(503).json({
         success: false,
-        error: 'Service unavailable',
-        message: 'Google Sheets not initialized'
+        error: 'Service unavailable'
       });
     }
-
     const query = req.query.q;
     const products = await sheetsInstance.searchProducts(query);
-
     res.json({
       success: true,
       count: products.length,
       data: products
     });
   } catch (error) {
-    console.error('Error fetching products:', error);
+    console.error('Error:', error);
     res.status(500).json({
       success: false,
-      error: 'Error fetching products',
-      message: error.message
+      error: error.message
     });
   }
 });
@@ -68,31 +66,26 @@ app.get('/api/products/:sku', async (req, res) => {
     if (!sheetsInstance) {
       return res.status(503).json({
         success: false,
-        error: 'Service unavailable',
-        message: 'Google Sheets not initialized'
+        error: 'Service unavailable'
       });
     }
-
-    const { sku } = req.params;
+    const sku = req.params.sku;
     const products = await sheetsInstance.searchProducts(sku);
-
     if (products.length === 0) {
       return res.status(404).json({
         success: false,
-        error: 'Product not found'
+        error: 'Not found'
       });
     }
-
     res.json({
       success: true,
       data: products[0]
     });
   } catch (error) {
-    console.error('Error fetching product:', error);
+    console.error('Error:', error);
     res.status(500).json({
       success: false,
-      error: 'Error fetching product',
-      message: error.message
+      error: error.message
     });
   }
 });
@@ -102,35 +95,27 @@ app.post('/api/detect-filter', async (req, res) => {
     if (!sheetsInstance) {
       return res.status(503).json({
         success: false,
-        error: 'Service unavailable',
-        message: 'Google Sheets not initialized'
+        error: 'Service unavailable'
       });
     }
-
-    const { query } = req.body;
-
+    const query = req.body.query;
     if (!query || query.trim() === '') {
       return res.status(400).json({
         success: false,
-        error: 'Query required',
-        message: 'Must provide a filter code to detect'
+        error: 'Query required'
       });
     }
-
-    console.log('Detecting filter for query:', query);
-
+    console.log('Detecting:', query);
     const result = await detectionService.detectFilter(query);
-
     res.json({
       success: true,
       data: result
     });
   } catch (error) {
-    console.error('Error detecting filter:', error);
+    console.error('Error:', error);
     res.status(500).json({
       success: false,
-      error: 'Error detecting filter',
-      message: error.message
+      error: error.message
     });
   }
 });
@@ -140,23 +125,23 @@ app.post('/api/generate-sku', async (req, res) => {
     if (!sheetsInstance) {
       return res.status(503).json({
         success: false,
-        error: 'Service unavailable',
-        message: 'Google Sheets not initialized'
+        error: 'Service unavailable'
       });
     }
-
-    const { filterType, family, specs, oemCodes, crossReference, rawData } = req.body;
-
+    const filterType = req.body.filterType;
+    const family = req.body.family;
+    const specs = req.body.specs;
+    const oemCodes = req.body.oemCodes;
+    const crossReference = req.body.crossReference;
+    const rawData = req.body.rawData;
+    
     if (!filterType || !family || !rawData) {
       return res.status(400).json({
         success: false,
-        error: 'Missing required fields',
-        message: 'Required: filterType, family, rawData'
+        error: 'Missing fields'
       });
     }
-
-    console.log('Generating SKU for filter type:', filterType, 'family:', family);
-
+    console.log('Generating SKU:', filterType, family);
     const sku = businessLogic.generateSKU(
       filterType,
       family,
@@ -165,7 +150,6 @@ app.post('/api/generate-sku', async (req, res) => {
       crossReference || [],
       rawData
     );
-
     res.json({
       success: true,
       data: {
@@ -177,11 +161,10 @@ app.post('/api/generate-sku', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Error generating SKU:', error);
+    console.error('Error:', error);
     res.status(500).json({
       success: false,
-      error: 'Error generating SKU',
-      message: error.message
+      error: error.message
     });
   }
 });
@@ -191,23 +174,22 @@ app.post('/api/process-filter', async (req, res) => {
     if (!sheetsInstance) {
       return res.status(503).json({
         success: false,
-        error: 'Service unavailable',
-        message: 'Google Sheets not initialized'
+        error: 'Service unavailable'
       });
     }
-
-    const { family, specs, oemCodes, crossReference, rawData } = req.body;
-
+    const family = req.body.family;
+    const specs = req.body.specs;
+    const oemCodes = req.body.oemCodes;
+    const crossReference = req.body.crossReference;
+    const rawData = req.body.rawData;
+    
     if (!family || !rawData) {
       return res.status(400).json({
         success: false,
-        error: 'Missing required fields',
-        message: 'Required: family, rawData'
+        error: 'Missing fields'
       });
     }
-
-    console.log('Processing filter data for family:', family);
-
+    console.log('Processing:', family);
     const processedData = businessLogic.processFilterData(
       family,
       specs || {},
@@ -215,17 +197,15 @@ app.post('/api/process-filter', async (req, res) => {
       crossReference || [],
       rawData
     );
-
     res.json({
       success: true,
       data: processedData
     });
   } catch (error) {
-    console.error('Error processing filter data:', error);
+    console.error('Error:', error);
     res.status(500).json({
       success: false,
-      error: 'Error processing filter data',
-      message: error.message
+      error: error.message
     });
   }
 });
@@ -233,31 +213,26 @@ app.post('/api/process-filter', async (req, res) => {
 app.use((req, res) => {
   res.status(404).json({
     success: false,
-    error: 'Route not found',
-    message: 'The route ' + req.method + ' ' + req.path + ' does not exist'
+    error: 'Not found'
   });
 });
 
 app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err);
+  console.error('Error:', err);
   res.status(500).json({
     success: false,
-    error: 'Internal server error',
-    message: err.message
+    error: err.message
   });
 });
 
 async function startServer() {
   try {
     await initializeServices();
-
     app.listen(PORT, () => {
-      console.log('Server running on port', PORT);
-      console.log('Health check available at: http://localhost:' + PORT + '/health');
-      console.log('Detection API: http://localhost:' + PORT + '/api/detect-filter');
+      console.log('Server on port', PORT);
     });
   } catch (error) {
-    console.error('Fatal error starting server:', error);
+    console.error('Fatal error:', error);
     process.exit(1);
   }
 }
@@ -265,11 +240,31 @@ async function startServer() {
 startServer();
 
 process.on('SIGTERM', () => {
-  console.log('SIGTERM received, closing server...');
+  console.log('SIGTERM');
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
-  console.log('SIGINT received, closing server...');
+  console.log('SIGINT');
   process.exit(0);
 });
+"""
+
+# Guardar con encoding explícito
+with open('server_CLEAN.js', 'w', encoding='ascii', errors='ignore') as f:
+    f.write(server_ultra_clean)
+
+print("✅ server_CLEAN.js creado")
+print("\n📋 Verificación:")
+print(f"- Total líneas: {len(server_ultra_clean.splitlines())}")
+print(f"- Encoding: ASCII puro")
+print(f"- Caracteres especiales: NINGUNO")
+print(f"- Comillas: Solo estándar ' y \"")
+
+# Verificar que no hay caracteres raros
+import re
+non_ascii = re.findall(r'[^\x00-\x7F]+', server_ultra_clean)
+if non_ascii:
+    print(f"\n⚠️ Caracteres no-ASCII encontrados: {non_ascii}")
+else:
+    print("\n✅ Archivo 100% ASCII - Sin caracteres especiales")
