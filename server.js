@@ -4,6 +4,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const { google } = require('googleapis');
+const businessLogic = require('./businessLogic');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -44,7 +45,7 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'online',
     message: 'ELIMFILTERS API v1.0',
-    endpoints: ['/api/products', '/api/search', '/api/filters']
+    endpoints: ['/api/products', '/api/search', '/api/filters', '/api/generate-sku']
   });
 });
 
@@ -158,6 +159,124 @@ app.get('/api/filters', async (req, res) => {
   } catch (error) {
     console.error('Error fetching filters:', error.message);
     res.status(500).json({ error: 'Failed to fetch filters', details: error.message });
+  }
+});
+
+// Endpoint robusto para generación de SKU
+app.post('/api/generate-sku', async (req, res) => {
+  try {
+    const { family, dutyLevel, oemCodes, crossReference } = req.body;
+
+    // Validación de entrada
+    if (!family) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Campo requerido: family' 
+      });
+    }
+
+    if (!dutyLevel) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Campo requerido: dutyLevel (HD o LD)' 
+      });
+    }
+
+    if (!oemCodes || !Array.isArray(oemCodes) || oemCodes.length === 0) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Campo requerido: oemCodes (array de códigos OEM)' 
+      });
+    }
+
+    // Generar SKU usando businessLogic
+    const sku = businessLogic.generateSKU(family, dutyLevel, oemCodes, crossReference);
+
+    // Información detallada del proceso
+    const donaldsonCode = businessLogic.findDonaldsonCode(crossReference);
+    const framCode = businessLogic.findFramCode(crossReference);
+    const mostCommonOEM = businessLogic.getMostCommonOEM(oemCodes);
+
+    res.json({
+      success: true,
+      sku: sku,
+      details: {
+        family: family,
+        dutyLevel: dutyLevel,
+        prefix: businessLogic.getElimfiltersPrefix(family),
+        sourceCode: dutyLevel === 'HD' 
+          ? (donaldsonCode || mostCommonOEM)
+          : dutyLevel === 'LD'
+          ? (framCode || mostCommonOEM)
+          : mostCommonOEM,
+        donaldsonFound: !!donaldsonCode,
+        framFound: !!framCode,
+        usedFallback: dutyLevel === 'HD' ? !donaldsonCode : dutyLevel === 'LD' ? !framCode : false
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('Error generating SKU:', error.message);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to generate SKU', 
+      details: error.message 
+    });
+  }
+});
+
+// Endpoint para validar y procesar datos de filtro completos
+app.post('/api/process-filter', async (req, res) => {
+  try {
+    const { family, specs, oemCodes, crossReference, rawData } = req.body;
+
+    // Validación de entrada
+    if (!rawData) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Campo requerido: rawData (datos maestros del filtro)' 
+      });
+    }
+
+    // Procesar datos del filtro con validación completa
+    const processedData = businessLogic.processFilterData(
+      family, 
+      specs, 
+      oemCodes, 
+      crossReference, 
+      rawData
+    );
+
+    // Generar SKU si no existe en rawData
+    let generatedSKU = null;
+    if (processedData.duty_level && oemCodes) {
+      try {
+        generatedSKU = businessLogic.generateSKU(
+          family || rawData.family,
+          processedData.duty_level,
+          oemCodes,
+          crossReference
+        );
+      } catch (skuError) {
+        console.warn('SKU generation warning:', skuError.message);
+      }
+    }
+
+    res.json({
+      success: true,
+      data: processedData,
+      generatedSKU: generatedSKU,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('Error processing filter:', error.message);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to process filter data', 
+      details: error.message 
+    });
   }
 });
 
