@@ -50,7 +50,8 @@ app.get('/', (req, res) => {
     endpoints: [
       '/health',
       '/api/products',
-      '/api/products/:id'
+      '/api/products/:sku',
+      '/api/search?q=keyword'
     ]
   });
 });
@@ -67,28 +68,39 @@ app.get('/api/products', async (req, res) => {
 
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: 'Master!A2:O', // Desde fila 2 hasta columna O (asumiendo fila 1 son headers)
+      range: 'Master!A2:Z', // Desde fila 2 hasta columna Z
     });
 
     const rows = response.data.values || [];
     
-    // Convertir filas a objetos
+    // Convertir filas a objetos con el mapeo correcto
     const products = rows.map(row => ({
-      id: row[0] || '',
-      name: row[1] || '',
-      brand: row[2] || '',
-      category: row[3] || '',
-      subcategory: row[4] || '',
-      partNumber: row[5] || '',
-      description: row[6] || '',
-      price: row[7] || '',
-      stock: row[8] || '',
-      image: row[9] || '',
-      specifications: row[10] || '',
-      compatibility: row[11] || '',
-      weight: row[12] || '',
-      dimensions: row[13] || '',
-      notes: row[14] || ''
+      query_norm: row[0] || '',
+      sku: row[1] || '',
+      oem_codes: row[2] || '',
+      cross_reference: row[3] || '',
+      filter_type: row[4] || '',
+      media_type: row[5] || '',
+      subtype: row[6] || '',
+      engine_applications: row[7] || '',
+      equipment_applications: row[8] || '',
+      height_mm: row[9] || '',
+      outer_diameter_mm: row[10] || '',
+      thread_size: row[11] || '',
+      gasket_od_mm: row[12] || '',
+      gasket_id_mm: row[13] || '',
+      bypass_valve_psi: row[14] || '',
+      micron_rating: row[15] || '',
+      duty: row[16] || '',
+      iso_main_efficiency: row[17] || '',
+      iso_test_method: row[18] || '',
+      beta_200: row[19] || '',
+      hydrostatic_burst_min_psi: row[20] || '',
+      dirt_capacity_g: row[21] || '',
+      rated_flow: row[22] || '',
+      panel_width_mm: row[23] || '',
+      panel_depth_mm: row[24] || '',
+      created_at: row[25] || ''
     }));
 
     res.json({ 
@@ -105,8 +117,8 @@ app.get('/api/products', async (req, res) => {
   }
 });
 
-// Get product by ID
-app.get('/api/products/:id', async (req, res) => {
+// Get product by SKU
+app.get('/api/products/:sku', async (req, res) => {
   try {
     if (!sheets) {
       return res.status(503).json({ 
@@ -117,13 +129,14 @@ app.get('/api/products/:id', async (req, res) => {
 
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: 'Master!A2:O',
+      range: 'Master!A2:Z',
     });
 
     const rows = response.data.values || [];
-    const productId = req.params.id;
+    const sku = req.params.sku.toLowerCase();
     
-    const row = rows.find(r => r[0] === productId);
+    // Buscar por SKU (columna B, índice 1)
+    const row = rows.find(r => r[1] && r[1].toLowerCase() === sku);
     
     if (!row) {
       return res.status(404).json({ 
@@ -133,21 +146,32 @@ app.get('/api/products/:id', async (req, res) => {
     }
 
     const product = {
-      id: row[0] || '',
-      name: row[1] || '',
-      brand: row[2] || '',
-      category: row[3] || '',
-      subcategory: row[4] || '',
-      partNumber: row[5] || '',
-      description: row[6] || '',
-      price: row[7] || '',
-      stock: row[8] || '',
-      image: row[9] || '',
-      specifications: row[10] || '',
-      compatibility: row[11] || '',
-      weight: row[12] || '',
-      dimensions: row[13] || '',
-      notes: row[14] || ''
+      query_norm: row[0] || '',
+      sku: row[1] || '',
+      oem_codes: row[2] || '',
+      cross_reference: row[3] || '',
+      filter_type: row[4] || '',
+      media_type: row[5] || '',
+      subtype: row[6] || '',
+      engine_applications: row[7] || '',
+      equipment_applications: row[8] || '',
+      height_mm: row[9] || '',
+      outer_diameter_mm: row[10] || '',
+      thread_size: row[11] || '',
+      gasket_od_mm: row[12] || '',
+      gasket_id_mm: row[13] || '',
+      bypass_valve_psi: row[14] || '',
+      micron_rating: row[15] || '',
+      duty: row[16] || '',
+      iso_main_efficiency: row[17] || '',
+      iso_test_method: row[18] || '',
+      beta_200: row[19] || '',
+      hydrostatic_burst_min_psi: row[20] || '',
+      dirt_capacity_g: row[21] || '',
+      rated_flow: row[22] || '',
+      panel_width_mm: row[23] || '',
+      panel_depth_mm: row[24] || '',
+      created_at: row[25] || ''
     };
 
     res.json({ 
@@ -156,6 +180,89 @@ app.get('/api/products/:id', async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching product:', error);
+    res.status(500).json({ 
+      success: false,
+      error: error.message 
+    });
+  }
+});
+
+// Search products
+app.get('/api/search', async (req, res) => {
+  try {
+    if (!sheets) {
+      return res.status(503).json({ 
+        success: false,
+        error: 'Google Sheets not initialized'
+      });
+    }
+
+    const query = req.query.q;
+    if (!query) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Query parameter "q" is required'
+      });
+    }
+
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: process.env.GOOGLE_SHEET_ID,
+      range: 'Master!A2:Z',
+    });
+
+    const rows = response.data.values || [];
+    const searchTerm = query.toLowerCase();
+    
+    // Buscar en múltiples campos
+    const results = rows.filter(row => {
+      const searchableText = [
+        row[0], // query_norm
+        row[1], // sku
+        row[2], // oem_codes
+        row[3], // cross_reference
+        row[4], // filter_type
+        row[7], // engine_applications
+        row[8]  // equipment_applications
+      ].join(' ').toLowerCase();
+      
+      return searchableText.includes(searchTerm);
+    }).map(row => ({
+      query_norm: row[0] || '',
+      sku: row[1] || '',
+      oem_codes: row[2] || '',
+      cross_reference: row[3] || '',
+      filter_type: row[4] || '',
+      media_type: row[5] || '',
+      subtype: row[6] || '',
+      engine_applications: row[7] || '',
+      equipment_applications: row[8] || '',
+      height_mm: row[9] || '',
+      outer_diameter_mm: row[10] || '',
+      thread_size: row[11] || '',
+      gasket_od_mm: row[12] || '',
+      gasket_id_mm: row[13] || '',
+      bypass_valve_psi: row[14] || '',
+      micron_rating: row[15] || '',
+      duty: row[16] || '',
+      iso_main_efficiency: row[17] || '',
+      iso_test_method: row[18] || '',
+      beta_200: row[19] || '',
+      hydrostatic_burst_min_psi: row[20] || '',
+      dirt_capacity_g: row[21] || '',
+      rated_flow: row[22] || '',
+      panel_width_mm: row[23] || '',
+      panel_depth_mm: row[24] || '',
+      created_at: row[25] || ''
+    }));
+
+    res.json({ 
+      success: true,
+      count: results.length,
+      query: query,
+      data: results
+    });
+  } catch (error) {
+    console.error('Error searching products:', error);
     res.status(500).json({ 
       success: false,
       error: error.message 
