@@ -1,4 +1,6 @@
-require('dotenv').config();
+# Crear el server.js corregido
+
+server_js_content = """require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const GoogleSheetsService = require('./googleSheetsConnector');
@@ -16,6 +18,27 @@ app.use(express.json());
 let sheetsInstance;
 
 // ============================================
+// INICIALIZACIÓN
+// ============================================
+
+async function initializeServices() {
+  try {
+    // Crear instancia de Google Sheets
+    sheetsInstance = new GoogleSheetsService();
+    await sheetsInstance.initialize();
+    
+    // Pasar la instancia al detectionService
+    detectionService.setSheetsInstance(sheetsInstance);
+    
+    console.log('✅ Todos los servicios inicializados correctamente');
+    return true;
+  } catch (error) {
+    console.error('❌ Error inicializando servicios:', error);
+    throw error;
+  }
+}
+
+// ============================================
 // RUTAS DE LA API
 // ============================================
 
@@ -24,13 +47,22 @@ app.get('/health', (req, res) => {
   res.json({ 
     status: 'ok', 
     timestamp: new Date().toISOString(),
-    service: 'ELIMFILTERS Proxy API'
+    service: 'ELIMFILTERS Proxy API',
+    sheetsConnected: sheetsInstance ? true : false
   });
 });
 
 // Endpoint para obtener todos los productos
 app.get('/api/products', async (req, res) => {
   try {
+    if (!sheetsInstance) {
+      return res.status(503).json({
+        success: false,
+        error: 'Servicio no disponible',
+        message: 'Google Sheets no está inicializado'
+      });
+    }
+
     const query = req.query.q;
     const products = await sheetsInstance.searchProducts(query);
     
@@ -52,6 +84,14 @@ app.get('/api/products', async (req, res) => {
 // Endpoint para buscar un producto específico
 app.get('/api/products/:sku', async (req, res) => {
   try {
+    if (!sheetsInstance) {
+      return res.status(503).json({
+        success: false,
+        error: 'Servicio no disponible',
+        message: 'Google Sheets no está inicializado'
+      });
+    }
+
     const { sku } = req.params;
     const products = await sheetsInstance.searchProducts(sku);
     
@@ -79,41 +119,34 @@ app.get('/api/products/:sku', async (req, res) => {
 // Endpoint para detectar tipo de filtro
 app.post('/api/detect-filter', async (req, res) => {
   try {
+    if (!sheetsInstance) {
+      return res.status(503).json({
+        success: false,
+        error: 'Servicio no disponible',
+        message: 'Google Sheets no está inicializado'
+      });
+    }
+
     const { query } = req.body;
     
-    if (!query) {
+    if (!query || query.trim() === '') {
       return res.status(400).json({
         success: false,
-        error: 'El parámetro "query" es requerido'
+        error: 'Query requerido',
+        message: 'Debe proporcionar un código de filtro para detectar'
       });
     }
 
-    console.log(`🔍 Detectando filtro para: ${query}`);
+    console.log(`🔍 Detectando filtro para query: ${query}`);
     
-    // Buscar primero en Master
-    const masterResult = await sheetsInstance.searchInMaster(query);
-    
-    if (masterResult.found) {
-      console.log('✅ Encontrado en Master');
-      return res.json({
-        success: true,
-        source: 'master',
-        data: masterResult.data
-      });
-    }
-
-    // Si no está en Master, usar detección
-    console.log('🔎 No encontrado en Master, iniciando detección...');
-    const detectionResult = await detectionService.detectFilter(query, sheetsInstance);
+    const result = await detectionService.detectFilter(query);
     
     res.json({
       success: true,
-      source: 'detection',
-      data: detectionResult
+      data: result
     });
-
   } catch (error) {
-    console.error('❌ Error en detect-filter:', error);
+    console.error('Error detecting filter:', error);
     res.status(500).json({
       success: false,
       error: 'Error al detectar filtro',
@@ -125,26 +158,48 @@ app.post('/api/detect-filter', async (req, res) => {
 // Endpoint para generar SKU
 app.post('/api/generate-sku', async (req, res) => {
   try {
-    const { filterData } = req.body;
-    
-    if (!filterData) {
-      return res.status(400).json({
+    if (!sheetsInstance) {
+      return res.status(503).json({
         success: false,
-        error: 'El parámetro "filterData" es requerido'
+        error: 'Servicio no disponible',
+        message: 'Google Sheets no está inicializado'
       });
     }
 
-    console.log(`🏷️ Generando SKU para:`, filterData);
+    const { filterType, family, specs, oemCodes, crossReference, rawData } = req.body;
     
-    const skuResult = businessLogic.generateSKU(filterData);
+    // Validación de campos requeridos
+    if (!filterType || !family || !rawData) {
+      return res.status(400).json({
+        success: false,
+        error: 'Campos requeridos faltantes',
+        message: 'Se requieren: filterType, family, rawData'
+      });
+    }
+
+    console.log(`🏷️ Generando SKU para filtro tipo: ${filterType}, familia: ${family}`);
+    
+    const sku = businessLogic.generateSKU(
+      filterType,
+      family,
+      specs || {},
+      oemCodes || [],
+      crossReference || [],
+      rawData
+    );
     
     res.json({
       success: true,
-      data: skuResult
+      data: {
+        sku: sku,
+        filterType: filterType,
+        family: family,
+        dutyLevel: rawData.duty_level,
+        timestamp: new Date().toISOString()
+      }
     });
-
   } catch (error) {
-    console.error('❌ Error en generate-sku:', error);
+    console.error('Error generating SKU:', error);
     res.status(500).json({
       success: false,
       error: 'Error al generar SKU',
@@ -153,96 +208,114 @@ app.post('/api/generate-sku', async (req, res) => {
   }
 });
 
-// Endpoint para procesar filtro completo (detección + SKU)
+// Endpoint para procesar datos de filtro completos
 app.post('/api/process-filter', async (req, res) => {
   try {
-    const { query } = req.body;
+    if (!sheetsInstance) {
+      return res.status(503).json({
+        success: false,
+        error: 'Servicio no disponible',
+        message: 'Google Sheets no está inicializado'
+      });
+    }
+
+    const { family, specs, oemCodes, crossReference, rawData } = req.body;
     
-    if (!query) {
+    // Validación de campos requeridos
+    if (!family || !rawData) {
       return res.status(400).json({
         success: false,
-        error: 'El parámetro "query" es requerido'
+        error: 'Campos requeridos faltantes',
+        message: 'Se requieren: family, rawData'
       });
     }
 
-    console.log(`🔄 Procesando filtro completo: ${query}`);
+    console.log(`⚙️ Procesando datos de filtro familia: ${family}`);
     
-    // 1. Buscar en Master
-    const masterResult = await sheetsInstance.searchInMaster(query);
-    
-    if (masterResult.found) {
-      console.log('✅ Encontrado en Master');
-      return res.json({
-        success: true,
-        source: 'master',
-        data: masterResult.data
-      });
-    }
-
-    // 2. Detectar filtro
-    console.log('🔎 Detectando filtro...');
-    const detectionResult = await detectionService.detectFilter(query, sheetsInstance);
-    
-    // 3. Generar SKU
-    console.log('🏷️ Generando SKU...');
-    const skuResult = businessLogic.generateSKU(detectionResult);
-    
-    // 4. Combinar resultados
-    const finalData = {
-      ...detectionResult,
-      ...skuResult
-    };
-
-    // 5. Guardar en Master (opcional)
-    // await sheetsInstance.saveToMaster(finalData);
+    const processedData = businessLogic.processFilterData(
+      family,
+      specs || {},
+      oemCodes || [],
+      crossReference || [],
+      rawData
+    );
     
     res.json({
       success: true,
-      source: 'detection',
-      data: finalData
+      data: processedData
     });
-
   } catch (error) {
-    console.error('❌ Error en process-filter:', error);
+    console.error('Error processing filter data:', error);
     res.status(500).json({
       success: false,
-      error: 'Error al procesar filtro',
+      error: 'Error al procesar datos de filtro',
       message: error.message
     });
   }
 });
 
-// Ruta 404
+// Manejo de rutas no encontradas
 app.use((req, res) => {
   res.status(404).json({
     success: false,
-    error: 'Ruta no encontrada'
+    error: 'Ruta no encontrada',
+    message: `La ruta ${req.method} ${req.path} no existe`
+  });
+});
+
+// Manejo de errores global
+app.use((err, req, res, next) => {
+  console.error('Error no manejado:', err);
+  res.status(500).json({
+    success: false,
+    error: 'Error interno del servidor',
+    message: err.message
   });
 });
 
 // ============================================
-// INICIALIZACIÓN DEL SERVIDOR
+// INICIO DEL SERVIDOR
 // ============================================
 
 async function startServer() {
   try {
-    console.log('🚀 Iniciando servidor...');
+    // Inicializar servicios primero
+    await initializeServices();
     
-    // Crear instancia de Google Sheets
-    sheetsInstance = new GoogleSheetsService();
-    await sheetsInstance.initialize();
-    console.log('✅ Google Sheets conectado correctamente');
-    
-    // Iniciar servidor
-    app.listen(PORT, '0.0.0.0', () => {
-      console.log(`✅ Servidor corriendo en puerto ${PORT}`);
-      console.log(`📍 Health check: http://localhost:${PORT}/health`);
+    // Luego iniciar el servidor
+    app.listen(PORT, () => {
+      console.log(`🚀 Servidor corriendo en puerto ${PORT}`);
+      console.log(`📊 Health check disponible en: http://localhost:${PORT}/health`);
+      console.log(`🔍 API de detección: http://localhost:${PORT}/api/detect-filter`);
     });
-    
   } catch (error) {
-    console.error('❌ Failed to start server:', error);
+    console.error('❌ Error fatal al iniciar servidor:', error);
     process.exit(1);
   }
 }
 
+// Iniciar el servidor
 startServer();
+
+// Manejo de señales de terminación
+process.on('SIGTERM', () => {
+  console.log('SIGTERM recibido, cerrando servidor...');
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT recibido, cerrando servidor...');
+  process.exit(0);
+});
+"""
+
+with open('server_FIXED.js', 'w', encoding='utf-8') as f:
+    f.write(server_js_content)
+
+print("✅ server.js corregido creado")
+print("\nCambios principales:")
+print("1. ✅ Instancia correcta de GoogleSheetsService")
+print("2. ✅ Función initializeServices() para inicializar todo")
+print("3. ✅ Pasa la instancia a detectionService")
+print("4. ✅ Validación de servicio disponible en cada endpoint")
+print("5. ✅ Manejo de errores mejorado")
