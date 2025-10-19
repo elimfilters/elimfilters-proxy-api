@@ -1,6 +1,4 @@
-# Crear el server.js corregido
-
-server_js_content = """require('dotenv').config();
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const GoogleSheetsService = require('./googleSheetsConnector');
@@ -10,39 +8,24 @@ const businessLogic = require('./businessLogic');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 
-// Variable global para la instancia de Google Sheets
 let sheetsInstance;
-
-// ============================================
-// INICIALIZACIÓN
-// ============================================
 
 async function initializeServices() {
   try {
-    // Crear instancia de Google Sheets
     sheetsInstance = new GoogleSheetsService();
     await sheetsInstance.initialize();
-    
-    // Pasar la instancia al detectionService
     detectionService.setSheetsInstance(sheetsInstance);
-    
-    console.log('✅ Todos los servicios inicializados correctamente');
+    console.log('Services initialized successfully');
     return true;
   } catch (error) {
-    console.error('❌ Error inicializando servicios:', error);
+    console.error('Error initializing services:', error);
     throw error;
   }
 }
 
-// ============================================
-// RUTAS DE LA API
-// ============================================
-
-// Ruta de health check
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'ok', 
@@ -52,20 +35,19 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Endpoint para obtener todos los productos
 app.get('/api/products', async (req, res) => {
   try {
     if (!sheetsInstance) {
       return res.status(503).json({
         success: false,
-        error: 'Servicio no disponible',
-        message: 'Google Sheets no está inicializado'
+        error: 'Service unavailable',
+        message: 'Google Sheets not initialized'
       });
     }
 
     const query = req.query.q;
     const products = await sheetsInstance.searchProducts(query);
-    
+
     res.json({
       success: true,
       count: products.length,
@@ -75,33 +57,32 @@ app.get('/api/products', async (req, res) => {
     console.error('Error fetching products:', error);
     res.status(500).json({
       success: false,
-      error: 'Error al obtener productos',
+      error: 'Error fetching products',
       message: error.message
     });
   }
 });
 
-// Endpoint para buscar un producto específico
 app.get('/api/products/:sku', async (req, res) => {
   try {
     if (!sheetsInstance) {
       return res.status(503).json({
         success: false,
-        error: 'Servicio no disponible',
-        message: 'Google Sheets no está inicializado'
+        error: 'Service unavailable',
+        message: 'Google Sheets not initialized'
       });
     }
 
     const { sku } = req.params;
     const products = await sheetsInstance.searchProducts(sku);
-    
+
     if (products.length === 0) {
       return res.status(404).json({
         success: false,
-        error: 'Producto no encontrado'
+        error: 'Product not found'
       });
     }
-    
+
     res.json({
       success: true,
       data: products[0]
@@ -110,37 +91,36 @@ app.get('/api/products/:sku', async (req, res) => {
     console.error('Error fetching product:', error);
     res.status(500).json({
       success: false,
-      error: 'Error al obtener producto',
+      error: 'Error fetching product',
       message: error.message
     });
   }
 });
 
-// Endpoint para detectar tipo de filtro
 app.post('/api/detect-filter', async (req, res) => {
   try {
     if (!sheetsInstance) {
       return res.status(503).json({
         success: false,
-        error: 'Servicio no disponible',
-        message: 'Google Sheets no está inicializado'
+        error: 'Service unavailable',
+        message: 'Google Sheets not initialized'
       });
     }
 
     const { query } = req.body;
-    
+
     if (!query || query.trim() === '') {
       return res.status(400).json({
         success: false,
-        error: 'Query requerido',
-        message: 'Debe proporcionar un código de filtro para detectar'
+        error: 'Query required',
+        message: 'Must provide a filter code to detect'
       });
     }
 
-    console.log(`🔍 Detectando filtro para query: ${query}`);
-    
+    console.log('Detecting filter for query:', query);
+
     const result = await detectionService.detectFilter(query);
-    
+
     res.json({
       success: true,
       data: result
@@ -149,36 +129,34 @@ app.post('/api/detect-filter', async (req, res) => {
     console.error('Error detecting filter:', error);
     res.status(500).json({
       success: false,
-      error: 'Error al detectar filtro',
+      error: 'Error detecting filter',
       message: error.message
     });
   }
 });
 
-// Endpoint para generar SKU
 app.post('/api/generate-sku', async (req, res) => {
   try {
     if (!sheetsInstance) {
       return res.status(503).json({
         success: false,
-        error: 'Servicio no disponible',
-        message: 'Google Sheets no está inicializado'
+        error: 'Service unavailable',
+        message: 'Google Sheets not initialized'
       });
     }
 
     const { filterType, family, specs, oemCodes, crossReference, rawData } = req.body;
-    
-    // Validación de campos requeridos
+
     if (!filterType || !family || !rawData) {
       return res.status(400).json({
         success: false,
-        error: 'Campos requeridos faltantes',
-        message: 'Se requieren: filterType, family, rawData'
+        error: 'Missing required fields',
+        message: 'Required: filterType, family, rawData'
       });
     }
 
-    console.log(`🏷️ Generando SKU para filtro tipo: ${filterType}, familia: ${family}`);
-    
+    console.log('Generating SKU for filter type:', filterType, 'family:', family);
+
     const sku = businessLogic.generateSKU(
       filterType,
       family,
@@ -187,7 +165,7 @@ app.post('/api/generate-sku', async (req, res) => {
       crossReference || [],
       rawData
     );
-    
+
     res.json({
       success: true,
       data: {
@@ -202,36 +180,34 @@ app.post('/api/generate-sku', async (req, res) => {
     console.error('Error generating SKU:', error);
     res.status(500).json({
       success: false,
-      error: 'Error al generar SKU',
+      error: 'Error generating SKU',
       message: error.message
     });
   }
 });
 
-// Endpoint para procesar datos de filtro completos
 app.post('/api/process-filter', async (req, res) => {
   try {
     if (!sheetsInstance) {
       return res.status(503).json({
         success: false,
-        error: 'Servicio no disponible',
-        message: 'Google Sheets no está inicializado'
+        error: 'Service unavailable',
+        message: 'Google Sheets not initialized'
       });
     }
 
     const { family, specs, oemCodes, crossReference, rawData } = req.body;
-    
-    // Validación de campos requeridos
+
     if (!family || !rawData) {
       return res.status(400).json({
         success: false,
-        error: 'Campos requeridos faltantes',
-        message: 'Se requieren: family, rawData'
+        error: 'Missing required fields',
+        message: 'Required: family, rawData'
       });
     }
 
-    console.log(`⚙️ Procesando datos de filtro familia: ${family}`);
-    
+    console.log('Processing filter data for family:', family);
+
     const processedData = businessLogic.processFilterData(
       family,
       specs || {},
@@ -239,7 +215,7 @@ app.post('/api/process-filter', async (req, res) => {
       crossReference || [],
       rawData
     );
-    
+
     res.json({
       success: true,
       data: processedData
@@ -248,74 +224,52 @@ app.post('/api/process-filter', async (req, res) => {
     console.error('Error processing filter data:', error);
     res.status(500).json({
       success: false,
-      error: 'Error al procesar datos de filtro',
+      error: 'Error processing filter data',
       message: error.message
     });
   }
 });
 
-// Manejo de rutas no encontradas
 app.use((req, res) => {
   res.status(404).json({
     success: false,
-    error: 'Ruta no encontrada',
-    message: `La ruta ${req.method} ${req.path} no existe`
+    error: 'Route not found',
+    message: 'The route ' + req.method + ' ' + req.path + ' does not exist'
   });
 });
 
-// Manejo de errores global
 app.use((err, req, res, next) => {
-  console.error('Error no manejado:', err);
+  console.error('Unhandled error:', err);
   res.status(500).json({
     success: false,
-    error: 'Error interno del servidor',
+    error: 'Internal server error',
     message: err.message
   });
 });
 
-// ============================================
-// INICIO DEL SERVIDOR
-// ============================================
-
 async function startServer() {
   try {
-    // Inicializar servicios primero
     await initializeServices();
-    
-    // Luego iniciar el servidor
+
     app.listen(PORT, () => {
-      console.log(`🚀 Servidor corriendo en puerto ${PORT}`);
-      console.log(`📊 Health check disponible en: http://localhost:${PORT}/health`);
-      console.log(`🔍 API de detección: http://localhost:${PORT}/api/detect-filter`);
+      console.log('Server running on port', PORT);
+      console.log('Health check available at: http://localhost:' + PORT + '/health');
+      console.log('Detection API: http://localhost:' + PORT + '/api/detect-filter');
     });
   } catch (error) {
-    console.error('❌ Error fatal al iniciar servidor:', error);
+    console.error('Fatal error starting server:', error);
     process.exit(1);
   }
 }
 
-// Iniciar el servidor
 startServer();
 
-// Manejo de señales de terminación
 process.on('SIGTERM', () => {
-  console.log('SIGTERM recibido, cerrando servidor...');
+  console.log('SIGTERM received, closing server...');
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
-  console.log('SIGINT recibido, cerrando servidor...');
+  console.log('SIGINT received, closing server...');
   process.exit(0);
 });
-"""
-
-with open('server_FIXED.js', 'w', encoding='utf-8') as f:
-    f.write(server_js_content)
-
-print("✅ server.js corregido creado")
-print("\nCambios principales:")
-print("1. ✅ Instancia correcta de GoogleSheetsService")
-print("2. ✅ Función initializeServices() para inicializar todo")
-print("3. ✅ Pasa la instancia a detectionService")
-print("4. ✅ Validación de servicio disponible en cada endpoint")
-print("5. ✅ Manejo de errores mejorado")
