@@ -1,6 +1,8 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const fetch = require('node-fetch');
+
 const GoogleSheetsService = require('./googleSheetsConnector');
 const detectionService = require('./detectionService');
 const businessLogic = require('./businessLogic');
@@ -8,11 +10,22 @@ const businessLogic = require('./businessLogic');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(cors());
-app.use(express.json());
+/* ===== CORS: limita a tu dominio ===== */
+const ORIGINS = (process.env.ALLOWED_ORIGINS || 'https://elimfilters.com,https://www.elimfilters.com')
+  .split(',')
+  .map(s => s.trim());
+app.use(cors({ origin: (o, cb) => cb(null, !o || ORIGINS.includes(o)), methods: ['GET','POST'] }));
+app.use(express.json({ limit: '1mb' }));
+
+/* ===== n8n URLs: principal + fallback ===== */
+const N8N_URL =
+  process.env.N8N_WEBHOOK_URL ||   // debe ser la Production URL exacta del Webhook
+  process.env.N8N_URL_PRIMARY ||
+  process.env.N8N_URL_FALLBACK;
 
 let sheetsInstance;
 
+/* ---------- Init services ---------- */
 async function initializeServices() {
   try {
     sheetsInstance = new GoogleSheetsService();
@@ -26,26 +39,56 @@ async function initializeServices() {
   }
 }
 
+/* ---------- Health ---------- */
+app.get('/healthz', (_req, res) => res.send('ok'));
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
     service: 'ELIMFILTERS Proxy API',
-    sheetsConnected: !!sheetsInstance
+    sheetsConnected: !!sheetsInstance,
+    n8nUrlConfigured: !!N8N_URL
   });
 });
+app.get('/', (_req, res) => res.redirect('/health'));
 
-// Ruta raíz para prueba rápida
-app.get('/', (req, res) => res.redirect('/health'));
+/* ---------- Chat endpoint (WP widget) ---------- */
+app.post('/chat', async (req, res) => {
+  try {
+    const message = req.body.message || req.body.text || req.body.content || '';
+    const sessionId = req.body.sessionId || req.body.session_id || 'anon';
 
+    if (!message.trim()) {
+      return res.status(400).json({ reply: 'Por favor, ingrese un código válido.' });
+    }
+    if (!N8N_URL) {
+      return res.status(503).json({ reply: 'Servicio técnico temporalmente no disponible. Intente nuevamente.' });
+    }
+
+    const r = await fetch(N8N_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, sessionId, source: 'wp-widget' })
+    });
+
+    if (!r.ok) {
+      console.error('n8n error status:', r.status, await r.text().catch(()=> ''));
+      return res.status(502).json({ reply: 'Error de conexión. Por favor intenta nuevamente.' });
+    }
+
+    const out = await r.json().catch(() => ({}));
+    return res.json({ reply: out.reply ?? 'Error interno.' });
+  } catch (e) {
+    console.error('Proxy /chat error:', e);
+    return res.status(502).json({ reply: 'Error de conexión. Por favor intenta nuevamente.' });
+  }
+});
+
+/* ---------- API existentes (Sheets) ---------- */
 app.get('/api/products', async (req, res) => {
   try {
     if (!sheetsInstance) {
-      return res.status(503).json({
-        success: false,
-        error: 'Service unavailable',
-        message: 'Google Sheets not initialized'
-      });
+      return res.status(503).json({ success: false, error: 'Service unavailable', message: 'Google Sheets not initialized' });
     }
     const query = req.query.q || '';
     const products = await sheetsInstance.searchProducts(query);
@@ -59,11 +102,7 @@ app.get('/api/products', async (req, res) => {
 app.get('/api/products/:sku', async (req, res) => {
   try {
     if (!sheetsInstance) {
-      return res.status(503).json({
-        success: false,
-        error: 'Service unavailable',
-        message: 'Google Sheets not initialized'
-      });
+      return res.status(503).json({ success: false, error: 'Service unavailable', message: 'Google Sheets not initialized' });
     }
     const { sku } = req.params;
     const products = await sheetsInstance.searchProducts(sku);
@@ -80,11 +119,7 @@ app.get('/api/products/:sku', async (req, res) => {
 app.post('/api/detect-filter', async (req, res) => {
   try {
     if (!sheetsInstance) {
-      return res.status(503).json({
-        success: false,
-        error: 'Service unavailable',
-        message: 'Google Sheets not initialized'
-      });
+      return res.status(503).json({ success: false, error: 'Service unavailable', message: 'Google Sheets not initialized' });
     }
     const { query } = req.body;
     if (!query || query.trim() === '') {
@@ -102,11 +137,7 @@ app.post('/api/detect-filter', async (req, res) => {
 app.post('/api/generate-sku', async (req, res) => {
   try {
     if (!sheetsInstance) {
-      return res.status(503).json({
-        success: false,
-        error: 'Service unavailable',
-        message: 'Google Sheets not initialized'
-      });
+      return res.status(503).json({ success: false, error: 'Service unavailable', message: 'Google Sheets not initialized' });
     }
     const { filterType, family, specs, oemCodes, crossReference, rawData } = req.body;
     if (!filterType || !family || !rawData) {
@@ -124,11 +155,7 @@ app.post('/api/generate-sku', async (req, res) => {
 app.post('/api/process-filter', async (req, res) => {
   try {
     if (!sheetsInstance) {
-      return res.status(503).json({
-        success: false,
-        error: 'Service unavailable',
-        message: 'Google Sheets not initialized'
-      });
+      return res.status(503).json({ success: false, error: 'Service unavailable', message: 'Google Sheets not initialized' });
     }
     const { family, specs, oemCodes, crossReference, rawData } = req.body;
     if (!family || !rawData) {
@@ -143,34 +170,29 @@ app.post('/api/process-filter', async (req, res) => {
   }
 });
 
+/* ---------- 404 y errores ---------- */
 app.use((req, res) => {
-  res.status(404).json({
-    success: false,
-    error: 'Route not found',
-    message: `The route ${req.method} ${req.path} does not exist`
-  });
+  res.status(404).json({ success: false, error: 'Route not found', message: `The route ${req.method} ${req.path} does not exist` });
 });
-
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
   res.status(500).json({ success: false, error: 'Internal server error', message: err.message });
 });
 
+/* ---------- Start ---------- */
 async function startServer() {
   try {
     await initializeServices();
-    // Escuchar en 0.0.0.0 para Railway
     app.listen(PORT, '0.0.0.0', () => {
       console.log('Server running on port', PORT);
-      console.log('Health: /health');
-      console.log('Detection: /api/detect-filter');
+      console.log('Health: /health  /healthz');
+      console.log('Chat:   POST /chat  →', N8N_URL ? 'OK' : 'MISSING N8N URL');
     });
   } catch (error) {
     console.error('Fatal error starting server:', error);
     process.exit(1);
   }
 }
-
 startServer();
 
 process.on('SIGTERM', () => { console.log('SIGTERM received, closing server...'); process.exit(0); });
