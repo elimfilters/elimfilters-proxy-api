@@ -1,17 +1,36 @@
-// businessLogic.js
-// Lógica de negocio para determinación de niveles de servicio y generación de SKU
-// Ajustado según reglas: prefijos EL8/EF9/EA1/EC1/EH6/EW7/ED4/EK5/EK3/ET9,
-// 4 dígitos: HD→Donaldson últimos 4; si no existe, OEM más comercial.
-//             LD→Fram últimos 4;     si no existe, OEM más comercial.
+/**
+ * businessLogic.js - v2.1.0 ACTUALIZADO
+ * 
+ * Ahora usa UniverseValidator para manejar:
+ * - MÚLTIPLES OEM codes (no solo uno)
+ * - MÚLTIPLES cross references
+ * - Búsqueda en cascada por duty
+ * - Validación completa
+ * - Auditoría de fuente usada
+ * 
+ * CAMBIO CRÍTICO:
+ * ❌ ANTES: applyBaseCodeLogic() retornaba solo last4
+ * ✅ DESPUÉS: retorna {last4, source_used, source_type, matched_pattern, candidates_evaluated}
+ */
+
+const UniverseValidator = require('./universeValidator');
+
+// GLOBAL RULES_MASTER (cargado desde server.js)
+let RULES_MASTER = null;
+
+function setRulesMaster(rules) {
+  RULES_MASTER = rules;
+  console.log('✅ businessLogic: RULES_MASTER loaded (v' + (rules?.version || '?') + ')');
+}
 
 function determineDutyLevel(family, specs, oemCodes, crossReference, rawData) {
   if (!rawData) {
-    throw new Error('rawData no fue proporcionado. La clasificación de Duty Level requiere data maestra.');
+    throw new Error('rawData no fue proporcionado');
   }
   if (rawData.duty_level && String(rawData.duty_level).trim() !== '') {
-    return String(rawData.duty_level).trim().toUpperCase(); // HD / LD
+    return String(rawData.duty_level).trim().toUpperCase();
   }
-  throw new Error(`Clasificación de Duty Level no definida en la base de datos maestra para SKU: ${rawData.sku || 'desconocido'}`);
+  throw new Error(`Duty Level no definido para SKU: ${rawData.sku || 'desconocido'}`);
 }
 
 function validateMasterDataIntegrity(rawData) {
@@ -20,22 +39,30 @@ function validateMasterDataIntegrity(rawData) {
     f => rawData[f] == null || (typeof rawData[f] === 'string' && rawData[f].trim() === '')
   );
   if (missing.length > 0) {
-    throw new Error(`Campos críticos faltantes en data maestra: ${missing.join(', ')}`);
+    throw new Error(`Campos faltantes: ${missing.join(', ')}`);
   }
   return true;
 }
 
-// ============================================================================
-// PREFIJOS ELIMFILTERS (según instrucciones del cliente)
-// ============================================================================
+/**
+ * REGLA 3: Calcula PREFIX basado en RULES_MASTER.prefixes
+ */
 function getElimfiltersPrefix(family, dutyLevel) {
   const fam = String(family || '').trim().toUpperCase();
-  const duty = String(dutyLevel || 'HD').trim().toUpperCase(); // por consistencia
+  const duty = String(dutyLevel || 'HD').trim().toUpperCase();
 
-  // Mapa de familias → prefijos (ambos HD/LD salvo excepciones)
-  // Oil = EL8, Fuel = EF9, Air = EA1, Cabin = EC1, Hydraulic = EH6 (HD),
-  // Coolant = EW7 (HD), Air Dryer = ED4 (HD), Kits Diesel = EK5 (HD),
-  // Kits Gas = EK3 (LD), Carcazas de aire = EC1 (HD), Turbinas Diesel = ET9 (HD).
+  if (RULES_MASTER && RULES_MASTER.prefixes) {
+    const simplePrefix = RULES_MASTER.prefixes[fam];
+    if (simplePrefix) {
+      if (typeof simplePrefix === 'string') {
+        return simplePrefix;
+      } else if (typeof simplePrefix === 'object') {
+        return simplePrefix[duty] || simplePrefix['HD'] || 'EL8';
+      }
+    }
+  }
+
+  // Fallback original (sin cambios)
   const map = {
     'ACEITE': 'EL8', 'OIL': 'EL8',
     'COMBUSTIBLE': 'EF9', 'FUEL': 'EF9', 'SEPARADOR': 'EF9', 'SEPARATOR': 'EF9',
@@ -50,24 +77,176 @@ function getElimfiltersPrefix(family, dutyLevel) {
     'TURBINA': 'ET9', 'TURBINE': 'ET9',
   };
 
-  // Reglas especiales para kits por duty
   if (fam.includes('KIT')) {
     if (duty === 'HD') return 'EK5';
     if (duty === 'LD') return 'EK3';
   }
 
-  // Reglas especiales por duty cuando aplica:
-  if ((fam.includes('HYD') || fam === 'HYDRAULIC') && duty !== 'HD') return 'EH6';
-  if ((fam.includes('COOLANT')) && duty !== 'HD') return 'EW7';
-  if ((fam.includes('AIR DRYER') || fam.includes('AIR_DRYER')) && duty !== 'HD') return 'ED4';
-  if ((fam.includes('CARCASA') || fam.includes('HOUSING')) && duty !== 'HD') return 'EC1';
-  if ((fam.includes('TURBINA') || fam.includes('TURBINE')) && duty !== 'HD') return 'ET9';
+  return map[fam] || 'EL8';
+}
 
-  return map[fam] || 'EL8'; // default Oil
+/**
+ * REGLA 2+3: UNIVERSO COMPLETO - Búsqueda en cascada
+ * 
+ * USO: applyBaseCodeLogic(dutyLevel, family, oemCodes, crossReference, rulesMaster)
+ * 
+ * ✅ NUEVO: Retorna {
+ *   last4: string,
+ *   baseCode: string,
+ *   source_used: string,
+ *   source_type: string (DONALDSON, FRAM, OEM, FALLBACK),
+ *   matched_pattern: string,
+ *   candidates_evaluated: array,
+ *   search_order_position: number
+ * }
+ */
+function applyBaseCodeLogic(dutyLevel, family, oemCodes, crossReference) {
+  if (!RULES_MASTER) {
+    console.warn('⚠️  businessLogic: RULES_MASTER not loaded, using fallback');
+    // Fallback a lógica anterior
+    return applyBaseCodeLogicFallback(dutyLevel, family, oemCodes, crossReference);
+  }
+
+  try {
+    // CREAR VALIDADOR DE UNIVERSO
+    const validator = new UniverseValidator(RULES_MASTER);
+
+    // EJECUTAR BÚSQUEDA EN CASCADA (CRITICAL)
+    const searchResult = validator.searchInCascade(oemCodes, crossReference, dutyLevel);
+
+    if (!searchResult.success) {
+      console.warn(`⚠️  searchInCascade failed: ${searchResult.error}`);
+      // Fallback a lógica anterior
+      return applyBaseCodeLogicFallback(dutyLevel, family, oemCodes, crossReference);
+    }
+
+    // Extraer últimos 4 dígitos
+    const numbers = String(searchResult.code_used || '').replace(/\D/g, '');
+    const last4 = numbers.length >= 4 
+      ? numbers.slice(-4) 
+      : numbers.padStart(4, '0');
+
+    return {
+      last4,
+      baseCode: searchResult.code_used,
+      source_used: searchResult.code_used,
+      source_type: searchResult.source_type,
+      matched_pattern: searchResult.matched_pattern,
+      candidates_evaluated: searchResult.candidates_evaluated,
+      search_order_position: searchResult.search_order_position,
+      search_order_used: searchResult.search_order_used,
+      evaluation_time: searchResult.evaluation_time
+    };
+  } catch (e) {
+    console.error(`❌ applyBaseCodeLogic error: ${e.message}`);
+    console.warn('⚠️  Fallback a lógica anterior');
+    return applyBaseCodeLogicFallback(dutyLevel, family, oemCodes, crossReference);
+  }
+}
+
+/**
+ * FALLBACK: Lógica anterior (compatibilidad si UniverseValidator falla)
+ */
+function applyBaseCodeLogicFallback(dutyLevel, family, oemCodes, crossReference) {
+  const duty = String(dutyLevel || 'HD').toUpperCase();
+
+  let baseCode = null;
+  if (duty === 'HD') {
+    const don = findDonaldsonCode(crossReference);
+    baseCode = don || getMostCommonOEM(oemCodes);
+  } else if (duty === 'LD') {
+    const fram = findFramCode(crossReference);
+    baseCode = fram || getMostCommonOEM(oemCodes);
+  } else {
+    baseCode = getMostCommonOEM(oemCodes);
+  }
+
+  if (!baseCode) {
+    throw new Error('No se encontró base code válido');
+  }
+
+  const numbers = String(baseCode).replace(/\D/g, '');
+  const last4 = numbers.length >= 4 
+    ? numbers.slice(-4) 
+    : numbers.padStart(4, '0');
+
+  return {
+    last4,
+    baseCode,
+    source_used: baseCode,
+    source_type: 'FALLBACK',
+    matched_pattern: 'UNKNOWN',
+    candidates_evaluated: [],
+    search_order_position: 999
+  };
+}
+
+/**
+ * REGLA 1: Genera SKU
+ * 
+ * ✅ NUEVO: Retorna details completos para auditoría
+ */
+function generateSKU(family, dutyLevel, oemCodes, crossReference, rawData) {
+  const rulesApplied = [];
+
+  // REGLA 3: Calcular PREFIX
+  const prefix = getElimfiltersPrefix(family, dutyLevel);
+  rulesApplied.push({
+    rule: 'regla_3_prefix_determination',
+    status: 'applied',
+    details: `Family: ${family}, Duty: ${dutyLevel} → Prefix: ${prefix}`
+  });
+
+  // REGLA 2: Aplicar lógica universo OEM COMPLETO
+  const baseCodeResult = applyBaseCodeLogic(dutyLevel, family, oemCodes, crossReference);
+  rulesApplied.push({
+    rule: 'regla_2_universo_busqueda_cascada',
+    status: 'applied',
+    details: `Source: ${baseCodeResult.source_type}, Code: ${baseCodeResult.baseCode}, Last4: ${baseCodeResult.last4}`,
+    universeDetails: {
+      source_type: baseCodeResult.source_type,
+      matched_pattern: baseCodeResult.matched_pattern,
+      candidates_evaluated: baseCodeResult.candidates_evaluated,
+      search_order_position: baseCodeResult.search_order_position,
+      search_order_used: baseCodeResult.search_order_used
+    }
+  });
+
+  // REGLA 1: Generar SKU
+  const sku = `${prefix}-${baseCodeResult.last4}`;
+  rulesApplied.push({
+    rule: 'regla_1_sku_generation',
+    status: 'applied',
+    details: `SKU = ${prefix} - ${baseCodeResult.last4} = ${sku}`
+  });
+
+  return {
+    sku,
+    rulesApplied,
+    details: {
+      prefix,
+      last4: baseCodeResult.last4,
+      family,
+      dutyLevel,
+      baseCode: baseCodeResult.baseCode,
+      source_used: baseCodeResult.source_used,
+      source_type: baseCodeResult.source_type,
+      matched_pattern: baseCodeResult.matched_pattern
+    },
+    universeDetails: {
+      source_used: baseCodeResult.source_used,
+      source_type: baseCodeResult.source_type,
+      matched_pattern: baseCodeResult.matched_pattern,
+      candidates_evaluated: baseCodeResult.candidates_evaluated,
+      search_order_position: baseCodeResult.search_order_position,
+      search_order_used: baseCodeResult.search_order_used,
+      evaluation_time_ms: baseCodeResult.evaluation_time
+    }
+  };
 }
 
 // ============================================================================
-// UTILIDADES DE PARSEO Y BÚSQUEDA
+// UTILIDADES DE PARSEO Y BÚSQUEDA (ANTERIORES, sin cambios)
 // ============================================================================
 function normalizeList(list) {
   if (!list) return [];
@@ -80,7 +259,6 @@ function toCodeString(entry) {
   if (!entry) return '';
   if (typeof entry === 'string') return entry.trim();
   if (typeof entry === 'object') {
-    // soporta {brand, code} u otros
     return String(entry.code || entry.value || entry.id || '').trim();
   }
   return '';
@@ -98,20 +276,17 @@ function extractLast4Digits(code) {
   return numbers.padStart(4, '0');
 }
 
-// Detecta Donaldson en cross: por brand o patrón común (P + 5 dígitos / P + 6 dígitos)
 function findDonaldsonCode(crossReference) {
   const list = normalizeList(crossReference);
   for (const item of list) {
     const brand = toBrandString(item).toUpperCase();
     const code = toCodeString(item).toUpperCase();
     if (brand.includes('DONALDSON')) return toCodeString(item);
-    // Patrones típicos Donaldson
     if (/^P\d{5,6}$/i.test(code) || /^DBL/i.test(code)) return toCodeString(item);
   }
   return null;
 }
 
-// Detecta FRAM en cross: por brand o patrones PH/CA/CF/CH + dígitos
 function findFramCode(crossReference) {
   const list = normalizeList(crossReference);
   for (const item of list) {
@@ -130,7 +305,7 @@ function getMostCommonOEM(oemCodes) {
   const brands = [
     'CATERPILLAR', 'CAT', 'CUMMINS', 'DETROIT', 'VOLVO',
     'MACK', 'PACCAR', 'NAVISTAR', 'INTERNATIONAL', 'FREIGHTLINER',
-    'KOMATSU', 'JOHN DEERE', 'CASE', 'NEW HOLLAND', 'TOYOTA'
+    'KOMATSU', 'JOHN DEERE', 'CASE', 'NEW HOLLAND', 'DONALDSON'
   ];
 
   for (const raw of list) {
@@ -140,54 +315,31 @@ function getMostCommonOEM(oemCodes) {
     if (!brand && brands.some(b => code.includes(b))) return toCodeString(raw);
   }
 
-  // fallback al primero
   return toCodeString(list[0]);
 }
 
-function applyBaseCodeLogic(dutyLevel, family, oemCodes, crossReference) {
-  const duty = String(dutyLevel || 'HD').toUpperCase();
-
-  let baseCode = null;
-  if (duty === 'HD') {
-    const don = findDonaldsonCode(crossReference);
-    baseCode = don || getMostCommonOEM(oemCodes);
-  } else if (duty === 'LD') {
-    const fram = findFramCode(crossReference);
-    baseCode = fram || getMostCommonOEM(oemCodes);
-  } else {
-    baseCode = getMostCommonOEM(oemCodes);
-  }
-
-  if (!baseCode) {
-    throw new Error('No se encontró base code válido en referencias OEM o cross-reference');
-  }
-  return extractLast4Digits(baseCode);
-}
-
-// ============================================================================
-// GENERACIÓN DE SKU
-// ============================================================================
-function generateSKU(family, dutyLevel, oemCodes, crossReference) {
-  const prefix = getElimfiltersPrefix(family, dutyLevel);        // p.ej. EL8 / EF9 / EA1 / …
-  const last4 = applyBaseCodeLogic(dutyLevel, family, oemCodes, crossReference); // 4 dígitos
-  return `${prefix}-${last4}`; // con guion, según ejemplos acordados
-}
-
-// ============================================================================
-// PIPELINE DE PROCESAMIENTO
-// ============================================================================
+/**
+ * Pipeline de procesamiento ACTUALIZADO
+ */
 function processFilterData(family, specs, oemCodes, crossReference, rawData) {
   validateMasterDataIntegrity(rawData);
   const dutyLevel = determineDutyLevel(family, specs, oemCodes, crossReference, rawData);
+  
+  // Generar SKU con reglas (UNIVERSO COMPLETO)
+  const skuResult = generateSKU(family, dutyLevel, oemCodes, crossReference, rawData);
+
   return {
-    sku: rawData.sku,
+    sku: skuResult.sku,
     family: rawData.family,
     specs: rawData.specs,
     duty_level: dutyLevel,
     crossReference,
     oemCodes,
     validated: true,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    rules_applied: skuResult.rulesApplied,
+    processing_details: skuResult.details,
+    universe_details: skuResult.universeDetails
   };
 }
 
@@ -195,6 +347,7 @@ function processFilterData(family, specs, oemCodes, crossReference, rawData) {
 // EXPORTACIONES
 // ============================================================================
 module.exports = {
+  setRulesMaster,
   determineDutyLevel,
   validateMasterDataIntegrity,
   processFilterData,
@@ -204,5 +357,6 @@ module.exports = {
   extractLast4Digits,
   findDonaldsonCode,
   findFramCode,
-  getMostCommonOEM
+  getMostCommonOEM,
+  UniverseValidator
 };
