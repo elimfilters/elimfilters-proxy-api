@@ -1,192 +1,315 @@
 /**
- * server.js - v2.2.0 LIMPIO
+ * businessLogic.js - v2.2.0 LIMPIO
  * 
  * ✅ ELIMINADA dependencia rota: universeValidator
- * ✅ ELIMINADOS endpoints que dependían de UniverseValidator
- * ✅ MANTIENE funcionalidad core 100% operativa
+ * ✅ USA lógica fallback directamente (100% funcional)
+ * 
+ * FUNCIONALIDAD:
+ * - MÚLTIPLES OEM codes
+ * - MÚLTIPLES cross references
+ * - Búsqueda en cascada por duty (HD/LD)
+ * - Validación completa
+ * - Sin dependencias externas rotas
  */
 
-require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const fetch = require('node-fetch');
-const fs = require('fs');
-const path = require('path');
-
-const GoogleSheetsService = require('./googleSheetsConnector');
-const detectionService = require('./detectionService');
-const businessLogic = require('./businessLogic');
-
-const app = express();
-const PORT = process.env.PORT || 3000;
-
-// ============================================================================
-// CARGAR REGLAS_MAESTRAS.json
-// ============================================================================
+// GLOBAL RULES_MASTER (cargado desde server.js)
 let RULES_MASTER = null;
 
-function loadRulesMaster() {
-  try {
-    const possiblePaths = [
-      path.join(__dirname, 'config', 'REGLAS_MAESTRAS.json'),
-      path.join(__dirname, 'REGLAS_MAESTRAS.json'),
-      process.env.RULES_MASTER_PATH
-    ].filter(Boolean);
+function setRulesMaster(rules) {
+  RULES_MASTER = rules;
+  console.log('✅ businessLogic: RULES_MASTER loaded (v' + (rules?.version || '?') + ')');
+}
 
-    for (const filePath of possiblePaths) {
-      if (fs.existsSync(filePath)) {
-        const content = fs.readFileSync(filePath, 'utf8');
-        RULES_MASTER = JSON.parse(content);
-        console.log(`✅ REGLAS_MAESTRAS.json cargado desde: ${filePath} (v${RULES_MASTER.version})`);
-        return;
+function determineDutyLevel(family, specs, oemCodes, crossReference, rawData) {
+  if (!rawData) {
+    throw new Error('rawData no fue proporcionado');
+  }
+  if (rawData.duty_level && String(rawData.duty_level).trim() !== '') {
+    return String(rawData.duty_level).trim().toUpperCase();
+  }
+  throw new Error(`Duty Level no definido para SKU: ${rawData.sku || 'desconocido'}`);
+}
+
+function validateMasterDataIntegrity(rawData) {
+  const required = ['duty_level', 'sku', 'family', 'specs'];
+  const missing = required.filter(
+    f => rawData[f] == null || (typeof rawData[f] === 'string' && rawData[f].trim() === '')
+  );
+  if (missing.length > 0) {
+    throw new Error(`Campos faltantes: ${missing.join(', ')}`);
+  }
+  return true;
+}
+
+/**
+ * REGLA 3: Calcula PREFIX basado en RULES_MASTER.prefixes
+ */
+function getElimfiltersPrefix(family, dutyLevel) {
+  const fam = String(family || '').trim().toUpperCase();
+  const duty = String(dutyLevel || 'HD').trim().toUpperCase();
+
+  if (RULES_MASTER && RULES_MASTER.prefixes) {
+    const simplePrefix = RULES_MASTER.prefixes[fam];
+    if (simplePrefix) {
+      if (typeof simplePrefix === 'string') {
+        return simplePrefix;
+      } else if (typeof simplePrefix === 'object') {
+        return simplePrefix[duty] || simplePrefix['HD'] || 'EL8';
       }
     }
-
-    console.warn('⚠️  REGLAS_MAESTRAS.json no encontrado. Usando fallback.');
-    RULES_MASTER = { version: '1.0.0', prefixes: {}, rules: {} };
-  } catch (e) {
-    console.error(`❌ Error cargando REGLAS_MAESTRAS.json: ${e.message}`);
-    RULES_MASTER = { version: '1.0.0', prefixes: {}, rules: {} };
   }
-}
 
-// ============================================================================
-// CORS
-// ============================================================================
-const ORIGINS = (process.env.ALLOWED_ORIGINS || 'https://elimfilters.com,https://www.elimfilters.com')
-  .split(',').map(s => s.trim());
-
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  if (!origin || ORIGINS.includes(origin)) {
-    res.setHeader('Access-Control-Allow-Origin', origin || '*');
-  }
-  res.setHeader('Vary', 'Origin');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
-  if (req.method === 'OPTIONS') return res.status(204).end();
-  next();
-});
-
-app.use(express.json({ limit: '1mb' }));
-
-// ============================================================================
-// N8N URL
-// ============================================================================
-const N8N_URL =
-  process.env.N8N_WEBHOOK_URL ||
-  process.env.N8N_URL_PRIMARY ||
-  process.env.N8N_URL_FALLBACK;
-
-// ============================================================================
-// Google Sheets (opcional)
-// ============================================================================
-let sheetsInstance;
-
-async function initializeServices() {
-  sheetsInstance = new GoogleSheetsService();
-  await sheetsInstance.initialize();
-  detectionService.setSheetsInstance(sheetsInstance);
-  
-  // Pasar RULES_MASTER a businessLogic
-  businessLogic.setRulesMaster(RULES_MASTER);
-  
-  console.log('✅ Services initialized');
-}
-
-// ============================================================================
-// Health Checks
-// ============================================================================
-app.get('/healthz', (_req, res) => res.send('ok'));
-
-app.get('/health', (_req, res) => {
-  res.json({
-    status: 'ok',
-    timestamp: new Date().toISOString(),
-    service: 'ELIMFILTERS Proxy API',
-    version: RULES_MASTER?.version || 'unknown',
-    sheetsConnected: !!sheetsInstance,
-    n8nUrlConfigured: !!N8N_URL,
-    rulesLoaded: !!RULES_MASTER
-  });
-});
-
-app.get('/', (_req, res) => res.redirect('/health'));
-
-// ============================================================================
-// Helper: Forward to N8N
-// ============================================================================
-async function forwardToN8N(query, extra = {}) {
-  if (!N8N_URL) return { ok: false, status: 503, body: { reply: 'Service unavailable' } };
-  
-  const payload = {
-    body: { source: 'web', query },
-    headers: extra.headers || {},
-    meta: { sessionId: extra.sessionId || 'anon', origin: extra.origin || '' }
+  // Fallback (map completo)
+  const map = {
+    'ACEITE': 'EL8', 'OIL': 'EL8',
+    'COMBUSTIBLE': 'EF9', 'FUEL': 'EF9', 'SEPARADOR': 'EF9', 'SEPARATOR': 'EF9',
+    'AIRE': 'EA1', 'AIR': 'EA1',
+    'CABIN': 'EC1', 'CABIN AIR': 'EC1', 'AIRE_CABINA': 'EC1',
+    'HYDRAULIC': 'EH6', 'HIDRAULICO': 'EH6',
+    'COOLANT': 'EW7', 'REFRIGERANTE': 'EW7',
+    'AIR DRYER': 'ED4', 'AIR_DRYER': 'ED4',
+    'KIT_DIESEL': 'EK5', 'KIT DIESEL': 'EK5',
+    'KIT_GAS': 'EK3', 'KIT PASAJEROS': 'EK3',
+    'CARCASA': 'EC1', 'HOUSING': 'EC1',
+    'TURBINA': 'ET9', 'TURBINE': 'ET9',
   };
-  
-  const r = await fetch(N8N_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-    timeout: 15000
+
+  if (fam.includes('KIT')) {
+    if (duty === 'HD') return 'EK5';
+    if (duty === 'LD') return 'EK3';
+  }
+
+  return map[fam] || 'EL8';
+}
+
+/**
+ * REGLA 2: Búsqueda en cascada
+ * 
+ * HD → Busca Donaldson primero, luego OEM
+ * LD → Busca FRAM primero, luego OEM
+ * 
+ * Retorna: {
+ *   last4: string,
+ *   baseCode: string,
+ *   source_used: string,
+ *   source_type: string,
+ *   matched_pattern: string
+ * }
+ */
+function applyBaseCodeLogic(dutyLevel, family, oemCodes, crossReference) {
+  const duty = String(dutyLevel || 'HD').toUpperCase();
+
+  let baseCode = null;
+  let source_type = 'UNKNOWN';
+  let matched_pattern = 'FALLBACK';
+
+  if (duty === 'HD') {
+    // Buscar Donaldson primero
+    const don = findDonaldsonCode(crossReference);
+    if (don) {
+      baseCode = don;
+      source_type = 'DONALDSON';
+      matched_pattern = 'CROSS_REFERENCE';
+    } else {
+      baseCode = getMostCommonOEM(oemCodes);
+      source_type = 'OEM';
+      matched_pattern = 'OEM_PRIMARY';
+    }
+  } else if (duty === 'LD') {
+    // Buscar FRAM primero
+    const fram = findFramCode(crossReference);
+    if (fram) {
+      baseCode = fram;
+      source_type = 'FRAM';
+      matched_pattern = 'CROSS_REFERENCE';
+    } else {
+      baseCode = getMostCommonOEM(oemCodes);
+      source_type = 'OEM';
+      matched_pattern = 'OEM_PRIMARY';
+    }
+  } else {
+    // Duty desconocido → OEM directo
+    baseCode = getMostCommonOEM(oemCodes);
+    source_type = 'OEM';
+    matched_pattern = 'OEM_FALLBACK';
+  }
+
+  if (!baseCode) {
+    throw new Error('No se encontró base code válido');
+  }
+
+  const numbers = String(baseCode).replace(/\D/g, '');
+  const last4 = numbers.length >= 4 
+    ? numbers.slice(-4) 
+    : numbers.padStart(4, '0');
+
+  return {
+    last4,
+    baseCode,
+    source_used: baseCode,
+    source_type,
+    matched_pattern,
+    candidates_evaluated: [],
+    search_order_position: source_type === 'DONALDSON' || source_type === 'FRAM' ? 1 : 2
+  };
+}
+
+/**
+ * REGLA 1: Genera SKU
+ */
+function generateSKU(family, dutyLevel, oemCodes, crossReference, rawData) {
+  const rulesApplied = [];
+
+  // REGLA 3: Calcular PREFIX
+  const prefix = getElimfiltersPrefix(family, dutyLevel);
+  rulesApplied.push({
+    rule: 'regla_3_prefix_determination',
+    status: 'applied',
+    details: `Family: ${family}, Duty: ${dutyLevel} → Prefix: ${prefix}`
   });
-  
-  const text = await r.text().catch(() => '');
-  let json;
-  try { json = JSON.parse(text); } catch { json = { raw: text }; }
-  
-  return { ok: r.ok, status: r.status, body: json };
+
+  // REGLA 2: Aplicar lógica cascada
+  const baseCodeResult = applyBaseCodeLogic(dutyLevel, family, oemCodes, crossReference);
+  rulesApplied.push({
+    rule: 'regla_2_busqueda_cascada',
+    status: 'applied',
+    details: `Source: ${baseCodeResult.source_type}, Code: ${baseCodeResult.baseCode}, Last4: ${baseCodeResult.last4}`
+  });
+
+  // REGLA 1: Generar SKU
+  const sku = `${prefix}-${baseCodeResult.last4}`;
+  rulesApplied.push({
+    rule: 'regla_1_sku_generation',
+    status: 'applied',
+    details: `SKU = ${prefix} - ${baseCodeResult.last4} = ${sku}`
+  });
+
+  return {
+    sku,
+    rulesApplied,
+    details: {
+      prefix,
+      last4: baseCodeResult.last4,
+      family,
+      dutyLevel,
+      baseCode: baseCodeResult.baseCode,
+      source_used: baseCodeResult.source_used,
+      source_type: baseCodeResult.source_type,
+      matched_pattern: baseCodeResult.matched_pattern
+    }
+  };
 }
 
 // ============================================================================
-// Endpoints principales
+// UTILIDADES DE PARSEO Y BÚSQUEDA
 // ============================================================================
+function normalizeList(list) {
+  if (!list) return [];
+  if (Array.isArray(list)) return list;
+  if (typeof list === 'string') return list.split(/[,\n;]+/).map(s => s.trim()).filter(Boolean);
+  return [];
+}
 
-/**
- * Chat endpoint simple
- */
-app.post('/chat', async (req, res) => {
-  try {
-    const message = req.body?.message || req.body?.text || req.body?.content || '';
-    const sessionId = req.body?.sessionId || req.body?.session_id || 'anon';
-    if (!message.trim()) return res.status(400).json({ reply: 'Ingrese un código válido.' });
-
-    const fx = await forwardToN8N(message, { sessionId, origin: req.headers.origin });
-    if (!fx.ok) return res.status(502).json({ reply: 'Error de conexión. Intente nuevamente.' });
-
-    const b = fx.body || {};
-    const reply = b.message || (b.filter ? `${b.filter.filter_type || 'FILTER'} (${b.filter.sku || 'N/A'})` : 'Sin datos');
-    return res.json({ reply, raw: b });
-  } catch (e) {
-    console.error('❌ Proxy /chat error:', e);
-    return res.status(502).json({ reply: 'Error de conexión. Intente nuevamente.' });
+function toCodeString(entry) {
+  if (!entry) return '';
+  if (typeof entry === 'string') return entry.trim();
+  if (typeof entry === 'object') {
+    return String(entry.code || entry.value || entry.id || '').trim();
   }
-});
+  return '';
+}
 
-/**
- * REST endpoint usado por chatbot y WP
- */
-app.post('/api/v1/filters/search', async (req, res) => {
-  try {
-    const q =
-      req.body?.body?.query ||
-      req.body?.query ||
-      req.body?.q ||
-      req.body?.message ||
-      '';
-    const sessionId = req.body?.sessionId || 'anon';
-    if (!q.trim()) return res.status(400).json({ success: false, error: 'Query required' });
+function toBrandString(entry) {
+  if (!entry) return '';
+  if (typeof entry === 'object') return String(entry.brand || entry.maker || '').trim();
+  return '';
+}
 
-    const fx = await forwardToN8N(q, { sessionId, origin: req.headers.origin });
-    return res.status(fx.status).json(fx.body);
-  } catch (e) {
-    console.error('❌ Proxy /api/v1/filters/search error:', e);
-    return res.status(502).json({ success: false, error: 'proxy_failed' });
+function extractLast4Digits(code) {
+  const numbers = String(code || '').replace(/\D/g, '');
+  if (numbers.length >= 4) return numbers.slice(-4);
+  return numbers.padStart(4, '0');
+}
+
+function findDonaldsonCode(crossReference) {
+  const list = normalizeList(crossReference);
+  for (const item of list) {
+    const brand = toBrandString(item).toUpperCase();
+    const code = toCodeString(item).toUpperCase();
+    if (brand.includes('DONALDSON')) return toCodeString(item);
+    if (/^P\d{5,6}$/i.test(code) || /^DBL/i.test(code)) return toCodeString(item);
   }
-});
+  return null;
+}
+
+function findFramCode(crossReference) {
+  const list = normalizeList(crossReference);
+  for (const item of list) {
+    const brand = toBrandString(item).toUpperCase();
+    const code = toCodeString(item).toUpperCase();
+    if (brand.includes('FRAM')) return toCodeString(item);
+    if (/^(PH|CA|CF|CH)\d{3,6}$/i.test(code)) return toCodeString(item);
+  }
+  return null;
+}
+
+function getMostCommonOEM(oemCodes) {
+  const list = normalizeList(oemCodes);
+  if (list.length === 0) return null;
+
+  const brands = [
+    'CATERPILLAR', 'CAT', 'CUMMINS', 'DETROIT', 'VOLVO',
+    'MACK', 'PACCAR', 'NAVISTAR', 'INTERNATIONAL', 'FREIGHTLINER',
+    'KOMATSU', 'JOHN DEERE', 'CASE', 'NEW HOLLAND', 'DONALDSON'
+  ];
+
+  for (const raw of list) {
+    const code = toCodeString(raw).toUpperCase();
+    const brand = toBrandString(raw).toUpperCase();
+    if (brand && brands.some(b => brand.includes(b))) return toCodeString(raw);
+    if (!brand && brands.some(b => code.includes(b))) return toCodeString(raw);
+  }
+
+  return toCodeString(list[0]);
+}
 
 /**
- * APIs existentes (Sheets opcional)
+ * Pipeline de procesamiento
  */
-app.get('/api/products', async (req, res) =>
+function processFilterData(family, specs, oemCodes, crossReference, rawData) {
+  validateMasterDataIntegrity(rawData);
+  const dutyLevel = determineDutyLevel(family, specs, oemCodes, crossReference, rawData);
+  
+  // Generar SKU con reglas
+  const skuResult = generateSKU(family, dutyLevel, oemCodes, crossReference, rawData);
+
+  return {
+    sku: skuResult.sku,
+    family: rawData.family,
+    specs: rawData.specs,
+    duty_level: dutyLevel,
+    crossReference,
+    oemCodes,
+    validated: true,
+    timestamp: new Date().toISOString(),
+    rules_applied: skuResult.rulesApplied,
+    processing_details: skuResult.details
+  };
+}
+
+// ============================================================================
+// EXPORTACIONES
+// ============================================================================
+module.exports = {
+  setRulesMaster,
+  determineDutyLevel,
+  validateMasterDataIntegrity,
+  processFilterData,
+  getElimfiltersPrefix,
+  applyBaseCodeLogic,
+  generateSKU,
+  extractLast4Digits,
+  findDonaldsonCode,
+  findFramCode,
+  getMostCommonOEM
+};
