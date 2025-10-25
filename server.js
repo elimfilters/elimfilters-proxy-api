@@ -7,6 +7,9 @@ const fetch = require('node-fetch');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Necesario en Railway para que express-rate-limit no falle con ERR_ERL_UNEXPECTED_X_FORWARDED_FOR
+app.set('trust proxy', 1);
+
 /**
  * Seguridad básica y configuración
  */
@@ -33,7 +36,7 @@ app.use(rateLimit({
 
 /**
  * Healthcheck público
- * Útil para monitoreo y para confirmar que el contenedor está vivo.
+ * Confirma que el contenedor está vivo.
  */
 app.get(['/health', '/healthz'], (_req, res) => {
   res.json({
@@ -57,19 +60,17 @@ app.get('/', (_req, res) => {
 });
 
 /**
- * Lookup principal:
- * WordPress manda un código de parte o referencia del cliente.
- * Este servidor:
- *   - limpia ese valor
- *   - lo reenvía a n8n como { query: "valor" }
- *   - recibe datos del Sheet Master procesados por n8n
- *   - devuelve una respuesta limpia a WordPress
+ * Lookup principal.
  *
- * No requiere cambiar tu Sheet Master.
+ * Flujo:
+ * - El cliente (WordPress, Postman, etc) manda { code: "algo" } o { query: "algo" }.
+ * - Este servidor toma ese valor, lo normaliza y lo reenvía a n8n.
+ * - n8n busca en el Sheet Master por SKU, OEM_CODES o CROSS_REFERENCE y responde.
+ * - Este servidor homologa los nombres de campos y responde al frontend en formato estable.
  */
 app.post('/api/v1/filters/lookup', async (req, res) => {
   try {
-    // Aceptamos diferentes llaves para ser compatibles con front actual y futuro
+    // aceptar distintas llaves del cliente
     const codeFromClient =
       req.body?.code ||
       req.body?.query ||
@@ -88,8 +89,7 @@ app.post('/api/v1/filters/lookup', async (req, res) => {
       });
     }
 
-    // Llamamos al workflow de n8n
-    // n8n se encargará de buscar este valor en SKU / OEM_CODES / CROSS_REFERENCE
+    // llamada a n8n (usa la URL configurada en Railway -> N8N_WEBHOOK_URL)
     const n8nResponse = await fetch(process.env.N8N_WEBHOOK_URL, {
       method: 'POST',
       headers: {
@@ -97,7 +97,7 @@ app.post('/api/v1/filters/lookup', async (req, res) => {
         'x-api-key': process.env.INTERNAL_API_KEY || ''
       },
       body: JSON.stringify({
-        query: cleanCode,          // la API interna siempre manda "query"
+        query: cleanCode,          // n8n debe leer este campo como $json.query
         source: 'elimfilters.com',
         ts: Date.now()
       })
@@ -115,7 +115,7 @@ app.post('/api/v1/filters/lookup', async (req, res) => {
 
     const data = await n8nResponse.json();
 
-    // data es lo que devuelve n8n. Ejemplo esperado desde n8n:
+    // data esperado desde n8n:
     // {
     //   "success": true,
     //   "SKU": "ELIM-LF3000",
@@ -126,7 +126,7 @@ app.post('/api/v1/filters/lookup', async (req, res) => {
     //   "PDF_URL": "https://elimfilters.com/.../ELIM-LF3000-spec.pdf"
     // }
 
-    // Normalizamos nombres para el frontend WordPress
+    // normalización para WordPress / frontend
     return res.json({
       success: data.success === true,
       sku: data.sku || data.SKU || null,
@@ -136,7 +136,7 @@ app.post('/api/v1/filters/lookup', async (req, res) => {
       cross_reference: data.cross_reference || data.CROSS_REFERENCE || null,
       pdf_url: data.pdf_url || data.PDF_URL || null,
 
-      // raw se deja para debugging / validación, no lo uses en UI pública
+      // raw solo para depuración
       raw: data
     });
 
@@ -152,8 +152,8 @@ app.post('/api/v1/filters/lookup', async (req, res) => {
 });
 
 /**
- * Chat endpoint opcional de diagnóstico rápido
- * No afecta la búsqueda pero te permite probar conectividad externa con POST.
+ * Chat endpoint de diagnóstico.
+ * Sirve para probar POST rápido sin pasar por n8n.
  */
 app.post('/chat', (req, res) => {
   const msg = req.body?.message || '';
@@ -171,7 +171,7 @@ app.post('/chat', (req, res) => {
 });
 
 /**
- * Catch-all 404 controlado
+ * 404 controlado
  */
 app.use((req, res) => {
   res.status(404).json({
@@ -190,7 +190,7 @@ app.use((req, res) => {
 });
 
 /**
- * Error handler de seguridad
+ * Error handler general
  */
 app.use((err, req, res, _next) => {
   console.error('Unhandled error:', err);
@@ -203,7 +203,7 @@ app.use((err, req, res, _next) => {
 });
 
 /**
- * Iniciar servidor
+ * Arranque del servidor
  */
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ ELIMFILTERS Proxy API - v2.4.2`);
