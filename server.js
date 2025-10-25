@@ -1,282 +1,178 @@
-/**
- * server.js - v2.4.0 COMPLETO CON VALIDACIÓN
- * 
- * CARACTERÍSTICAS:
- * ✅ Validación completa de input
- * ✅ Manejo de errores robusto (igual a n8n)
- * ✅ Respuestas estandarizadas
- * ✅ Códigos de error claros
- * ✅ Integración lista para n8n
- */
-
 require('dotenv').config();
 const express = require('express');
+const cors = require('cors');
+const rateLimit = require('express-rate-limit');
+const fetch = require('node-fetch');
+
 const app = express();
-const PORT = process.env.PORT || 8000;
-
-// Middleware
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-// CORS
-app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
-  if (req.method === 'OPTIONS') return res.status(204).end();
-  next();
-});
-
-// Request logging
-app.use((req, res, next) => {
-  console.log(`${req.method} ${req.path} - ${new Date().toISOString()}`);
-  next();
-});
-
-// ============================================================================
-// VALIDACIÓN DE INPUT
-// ============================================================================
+const PORT = process.env.PORT || 3000;
 
 /**
- * Valida el código de filtro
- * @param {string} code - Código a validar
- * @returns {object} - {valid: boolean, error?: string, error_code?: string, normalized?: string}
+ * Seguridad básica y configuración
  */
-function validateFilterCode(code) {
-  // Check if code exists
-  if (!code || typeof code !== 'string' || code.trim() === '') {
-    return {
-      valid: false,
-      error: 'Code is required',
-      error_code: 'MISSING_CODE'
-    };
+app.use(express.json());
+
+app.use(cors({
+  origin: [
+    'https://elimfilters.com',
+    'https://www.elimfilters.com'
+  ],
+  methods: ['GET','POST','OPTIONS'],
+  allowedHeaders: ['Content-Type']
+}));
+
+app.use(rateLimit({
+  windowMs: 60 * 1000,          // 1 minuto
+  max: 50,                      // 50 req/min por IP
+  message: {
+    success: false,
+    error: 'Too many requests',
+    error_code: 'RATE_LIMIT'
   }
+}));
 
-  const normalized = code.trim().toUpperCase();
-
-  // Length validation (3-10 characters)
-  if (normalized.length < 3 || normalized.length > 10) {
-    return {
-      valid: false,
-      error: 'Code must be 3-10 characters',
-      error_code: 'INVALID_LENGTH',
-      received: code
-    };
-  }
-
-  // Character validation (alphanumeric + -_.)
-  if (!/^[A-Z0-9\-_.]+$/.test(normalized)) {
-    return {
-      valid: false,
-      error: 'Invalid characters in code. Only alphanumeric and -_. allowed',
-      error_code: 'INVALID_CHARS',
-      received: code
-    };
-  }
-
-  // Valid
-  return {
-    valid: true,
-    normalized: normalized,
-    original: code
-  };
-}
-
-// ============================================================================
-// HEALTH CHECK
-// ============================================================================
-
-app.get('/health', (req, res) => {
+/**
+ * Healthcheck público
+ * Útil para monitoreo y para confirmar que el contenedor está vivo.
+ */
+app.get(['/health', '/healthz'], (_req, res) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
     service: 'ELIMFILTERS Proxy API',
-    version: '2.4.0',
+    version: '2.4.2',
     endpoints: {
       health: 'GET /health',
-      search: 'POST /api/v1/filters/search',
       lookup: 'POST /api/v1/filters/lookup',
       chat: 'POST /chat'
     }
   });
 });
 
-app.get('/healthz', (req, res) => res.send('ok'));
-app.get('/', (req, res) => res.redirect('/health'));
-
-// ============================================================================
-// FILTER SEARCH ENDPOINT
-// ============================================================================
-
-app.post('/api/v1/filters/search', async (req, res) => {
-  try {
-    const code = req.body?.code || req.body?.query || req.body?.body?.code || req.body?.body?.query || '';
-    
-    // VALIDACIÓN
-    const validation = validateFilterCode(code);
-    
-    if (!validation.valid) {
-      return res.status(400).json({
-        success: false,
-        error: validation.error,
-        error_code: validation.error_code,
-        received: validation.received,
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    // TODO: Aquí conectar con n8n webhook cuando esté listo
-    // Por ahora, respuesta de placeholder
-    const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL;
-    
-    if (N8N_WEBHOOK_URL) {
-      // Forward a n8n
-      const fetch = require('node-fetch');
-      const n8nResponse = await fetch(N8N_WEBHOOK_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          code: validation.normalized,
-          source: 'railway-api'
-        })
-      });
-
-      const n8nData = await n8nResponse.json();
-      return res.status(n8nResponse.status).json(n8nData);
-    }
-
-    // Placeholder response (cuando n8n no está configurado)
-    return res.json({
-      success: true,
-      message: 'Code validated successfully - n8n integration pending',
-      code: validation.normalized,
-      original_code: validation.original,
-      timestamp: new Date().toISOString(),
-      note: 'Set N8N_WEBHOOK_URL environment variable to enable full integration'
-    });
-
-  } catch (error) {
-    console.error('❌ Error in /api/v1/filters/search:', error);
-    return res.status(500).json({
-      success: false,
-      error: 'Internal server error',
-      error_code: 'INTERNAL_ERROR',
-      timestamp: new Date().toISOString()
-    });
-  }
+/**
+ * Raíz redirige a /health
+ */
+app.get('/', (_req, res) => {
+  res.redirect('/health');
 });
 
-// ============================================================================
-// FILTER LOOKUP ENDPOINT (Alternativo)
-// ============================================================================
-
+/**
+ * Lookup principal:
+ * WordPress manda un código de parte o referencia del cliente.
+ * Este servidor:
+ *   - limpia ese valor
+ *   - lo reenvía a n8n como { query: "valor" }
+ *   - recibe datos del Sheet Master procesados por n8n
+ *   - devuelve una respuesta limpia a WordPress
+ *
+ * No requiere cambiar tu Sheet Master.
+ */
 app.post('/api/v1/filters/lookup', async (req, res) => {
   try {
-    const code = req.body?.code || '';
-    
-    // VALIDACIÓN
-    const validation = validateFilterCode(code);
-    
-    if (!validation.valid) {
+    // Aceptamos diferentes llaves para ser compatibles con front actual y futuro
+    const codeFromClient =
+      req.body?.code ||
+      req.body?.query ||
+      req.body?.sku ||
+      req.body?.oem ||
+      '';
+
+    const cleanCode = String(codeFromClient || '').trim();
+
+    if (!cleanCode) {
       return res.status(400).json({
         success: false,
-        error: validation.error,
-        error_code: validation.error_code,
-        received: validation.received,
+        error: 'code is required',
+        error_code: 'MISSING_CODE',
         timestamp: new Date().toISOString()
       });
     }
 
-    // TODO: Implementar lógica de búsqueda
-    // Por ahora, simula respuesta NOT_FOUND
-    return res.status(404).json({
-      success: false,
-      error: 'Filter not found in any source',
-      error_code: 'NOT_FOUND',
-      searched_code: validation.normalized,
-      suggestion: 'Please verify the code and try again',
-      timestamp: new Date().toISOString()
+    // Llamamos al workflow de n8n
+    // n8n se encargará de buscar este valor en SKU / OEM_CODES / CROSS_REFERENCE
+    const n8nResponse = await fetch(process.env.N8N_WEBHOOK_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': process.env.INTERNAL_API_KEY || ''
+      },
+      body: JSON.stringify({
+        query: cleanCode,          // la API interna siempre manda "query"
+        source: 'elimfilters.com',
+        ts: Date.now()
+      })
     });
 
-  } catch (error) {
-    console.error('❌ Error in /api/v1/filters/lookup:', error);
+    if (!n8nResponse.ok) {
+      console.error('n8n status:', n8nResponse.status, n8nResponse.statusText);
+      return res.status(502).json({
+        success: false,
+        error: 'Upstream n8n error',
+        error_code: 'N8N_BAD_GATEWAY',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const data = await n8nResponse.json();
+
+    // data es lo que devuelve n8n. Ejemplo esperado desde n8n:
+    // {
+    //   "success": true,
+    //   "SKU": "ELIM-LF3000",
+    //   "FILTER_TYPE": "Lube Oil Filter",
+    //   "CROSS_REFERENCE": "Donaldson P550371; Baldwin BD103",
+    //   "OEM_CODES": "Cummins 3318853; Fleetguard LF3000",
+    //   "DESCRIPTION": "High efficiency oil filter...",
+    //   "PDF_URL": "https://elimfilters.com/.../ELIM-LF3000-spec.pdf"
+    // }
+
+    // Normalizamos nombres para el frontend WordPress
+    return res.json({
+      success: data.success === true,
+      sku: data.sku || data.SKU || null,
+      filter_type: data.filter_type || data.FILTER_TYPE || null,
+      description: data.description || data.DESCRIPTION || null,
+      oem_codes: data.oem_codes || data.OEM_CODES || null,
+      cross_reference: data.cross_reference || data.CROSS_REFERENCE || null,
+      pdf_url: data.pdf_url || data.PDF_URL || null,
+
+      // raw se deja para debugging / validación, no lo uses en UI pública
+      raw: data
+    });
+
+  } catch (err) {
+    console.error('lookup error:', err);
     return res.status(500).json({
       success: false,
-      error: 'Internal server error',
-      error_code: 'INTERNAL_ERROR',
+      error: 'Internal Server Error',
+      error_code: 'INTERNAL',
       timestamp: new Date().toISOString()
     });
   }
 });
 
-// ============================================================================
-// CHAT ENDPOINT
-// ============================================================================
-
-app.post('/chat', async (req, res) => {
-  try {
-    const message = req.body?.message || '';
-    
-    if (!message || message.trim() === '') {
-      return res.status(400).json({
-        success: false,
-        error: 'Message is required',
-        error_code: 'MISSING_MESSAGE',
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    // Placeholder
-    return res.json({
-      success: true,
-      reply: 'Chat endpoint functional - Integration pending',
-      received_message: message,
-      timestamp: new Date().toISOString()
-    });
-
-  } catch (error) {
-    console.error('❌ Error in /chat:', error);
-    return res.status(500).json({
-      success: false,
-      error: 'Internal server error',
-      error_code: 'INTERNAL_ERROR',
-      timestamp: new Date().toISOString()
-    });
-  }
-});
-
-// ============================================================================
-// VALIDATION TEST ENDPOINT (Para testing)
-// ============================================================================
-
-app.post('/api/v1/test/validate', (req, res) => {
-  const code = req.body?.code || '';
-  const validation = validateFilterCode(code);
-  
-  if (validation.valid) {
-    return res.json({
-      success: true,
-      message: 'Code is valid',
-      normalized: validation.normalized,
-      original: validation.original,
-      timestamp: new Date().toISOString()
-    });
-  } else {
+/**
+ * Chat endpoint opcional de diagnóstico rápido
+ * No afecta la búsqueda pero te permite probar conectividad externa con POST.
+ */
+app.post('/chat', (req, res) => {
+  const msg = req.body?.message || '';
+  if (!msg.trim()) {
     return res.status(400).json({
-      success: false,
-      error: validation.error,
-      error_code: validation.error_code,
-      received: validation.received,
-      timestamp: new Date().toISOString()
+      reply: 'Mensaje requerido'
     });
   }
+
+  return res.json({
+    reply: 'Proxy activo',
+    echo: msg,
+    timestamp: new Date().toISOString()
+  });
 });
 
-// ============================================================================
-// ERROR HANDLERS
-// ============================================================================
-
-// 404 handler
+/**
+ * Catch-all 404 controlado
+ */
 app.use((req, res) => {
   res.status(404).json({
     success: false,
@@ -287,58 +183,41 @@ app.use((req, res) => {
     timestamp: new Date().toISOString(),
     available_routes: {
       health: 'GET /health',
-      search: 'POST /api/v1/filters/search',
       lookup: 'POST /api/v1/filters/lookup',
-      chat: 'POST /chat',
-      validate: 'POST /api/v1/test/validate'
+      chat: 'POST /chat'
     }
   });
 });
 
-// Global error handler
-app.use((err, req, res, next) => {
-  console.error('❌ Unhandled error:', err);
+/**
+ * Error handler de seguridad
+ */
+app.use((err, req, res, _next) => {
+  console.error('Unhandled error:', err);
   res.status(500).json({
     success: false,
-    error: 'Internal server error',
-    error_code: 'INTERNAL_ERROR',
+    error: 'Internal Server Error',
+    error_code: 'INTERNAL',
     timestamp: new Date().toISOString()
   });
 });
 
-// ============================================================================
-// SERVER START
-// ============================================================================
-
+/**
+ * Iniciar servidor
+ */
 app.listen(PORT, '0.0.0.0', () => {
-  console.log('════════════════════════════════════════════════════════');
-  console.log('✅ ELIMFILTERS Proxy API - v2.4.0');
-  console.log('════════════════════════════════════════════════════════');
+  console.log(`✅ ELIMFILTERS Proxy API - v2.4.2`);
   console.log(`🚀 Server listening on port ${PORT}`);
   console.log(`📊 Health: GET /health`);
-  console.log(`🔍 Search: POST /api/v1/filters/search`);
   console.log(`🔎 Lookup: POST /api/v1/filters/lookup`);
   console.log(`💬 Chat: POST /chat`);
-  console.log(`🧪 Test: POST /api/v1/test/validate`);
-  console.log('');
-  console.log('📡 N8N Integration:');
-  if (process.env.N8N_WEBHOOK_URL) {
-    console.log(`   ✅ Configured: ${process.env.N8N_WEBHOOK_URL}`);
-  } else {
-    console.log(`   ⚠️  Not configured - Set N8N_WEBHOOK_URL env variable`);
-  }
-  console.log('════════════════════════════════════════════════════════');
+  console.log(`🌐 N8N Integration: forwarding 'query' to ${process.env.N8N_WEBHOOK_URL}`);
 });
 
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('⚠️  SIGTERM received - Shutting down gracefully');
-  process.exit(0);
-});
-
-process.on('SIGINT', () => {
-  console.log('⚠️  SIGINT received - Shutting down gracefully');
-  process.exit(0);
-});
+/**
+ * Shutdown ordenado
+ */
+process.on('SIGTERM', () => process.exit(0));
+process.on('SIGINT', () => process.exit(0));
 
 module.exports = app;
