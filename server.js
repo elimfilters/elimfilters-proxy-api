@@ -222,4 +222,123 @@ app.post('/chat', async (req, res) => {
         success: false,
         error: 'Message is required',
         error_code: 'MISSING_MESSAGE',
-        timest
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    // Placeholder
+    return res.json({
+      success: true,
+      reply: 'Chat endpoint functional - Integration pending',
+      received_message: message,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('❌ Error in /chat:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+      error_code: 'INTERNAL_ERROR',
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// ============================================================================
+// VALIDATION TEST ENDPOINT (Para testing)
+// ============================================================================
+
+app.post('/api/v1/test/validate', (req, res) => {
+  const code = req.body?.code || '';
+  const validation = validateFilterCode(code);
+  
+  if (validation.valid) {
+    return res.json({
+      success: true,
+      message: 'Code is valid',
+      normalized: validation.normalized,
+      original: validation.original,
+      timestamp: new Date().toISOString()
+    });
+  } else {
+    return res.status(400).json({
+      success: false,
+      error: validation.error,
+      error_code: validation.error_code,
+      received: validation.received,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// ============================================================================
+// ERROR HANDLERS
+// ============================================================================
+
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    error: 'Route not found',
+    error_code: 'ROUTE_NOT_FOUND',
+    path: req.path,
+    method: req.method,
+    timestamp: new Date().toISOString(),
+    available_routes: {
+      health: 'GET /health',
+      search: 'POST /api/v1/filters/search',
+      lookup: 'POST /api/v1/filters/lookup',
+      chat: 'POST /chat',
+      validate: 'POST /api/v1/test/validate'
+    }
+  });
+});
+
+// Global error handler
+app.use((err, req, res, next) => {
+  console.error('❌ Unhandled error:', err);
+  res.status(500).json({
+    success: false,
+    error: 'Internal server error',
+    error_code: 'INTERNAL_ERROR',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// ============================================================================
+// SERVER START
+// ============================================================================
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log('════════════════════════════════════════════════════════');
+  console.log('✅ ELIMFILTERS Proxy API - v2.4.0');
+  console.log('════════════════════════════════════════════════════════');
+  console.log(`🚀 Server listening on port ${PORT}`);
+  console.log(`📊 Health: GET /health`);
+  console.log(`🔍 Search: POST /api/v1/filters/search`);
+  console.log(`🔎 Lookup: POST /api/v1/filters/lookup`);
+  console.log(`💬 Chat: POST /chat`);
+  console.log(`🧪 Test: POST /api/v1/test/validate`);
+  console.log('');
+  console.log('📡 N8N Integration:');
+  if (process.env.N8N_WEBHOOK_URL) {
+    console.log(`   ✅ Configured: ${process.env.N8N_WEBHOOK_URL}`);
+  } else {
+    console.log(`   ⚠️  Not configured - Set N8N_WEBHOOK_URL env variable`);
+  }
+  console.log('════════════════════════════════════════════════════════');
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('⚠️  SIGTERM received - Shutting down gracefully');
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  console.log('⚠️  SIGINT received - Shutting down gracefully');
+  process.exit(0);
+});
+
+module.exports = app;
