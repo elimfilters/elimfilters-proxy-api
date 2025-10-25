@@ -1,8 +1,3 @@
-/**
- * server.js - v2.3.1 Elimfilters Proxy API (Railway)
- * Flujo: WordPress → Express → n8n → Express → WordPress
- */
-
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -12,31 +7,23 @@ const fetch = require('node-fetch');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ---------------------------
-// 1. Middleware base
-// ---------------------------
 app.use(express.json());
 
-// CORS seguro
 app.use(cors({
   origin: [
     'https://elimfilters.com',
-    'https://www.elimfilters.com'
+  'https://www.elimfilters.com'
   ],
   methods: ['POST', 'GET', 'OPTIONS'],
   allowedHeaders: ['Content-Type']
 }));
 
-// Rate Limit - Previene abuso
 app.use(rateLimit({
-  windowMs: 60 * 1000, // 1 min
-  max: 50, // 50 requests/minuto por IP
+  windowMs: 60 * 1000,
+  max: 50,
   message: { success: false, message: 'Too many requests' }
 }));
 
-// ---------------------------
-// 2. Health checks
-// ---------------------------
 app.get(['/health', '/healthz'], (_req, res) => {
   res.json({
     status: 'ok',
@@ -48,9 +35,6 @@ app.get(['/health', '/healthz'], (_req, res) => {
 
 app.get('/', (_req, res) => res.redirect('/health'));
 
-// ---------------------------
-// 3. Endpoint principal de búsqueda
-// ---------------------------
 app.post('/api/filter-lookup', async (req, res) => {
   try {
     const code = req.body?.code || req.body?.query || '';
@@ -63,7 +47,6 @@ app.post('/api/filter-lookup', async (req, res) => {
       });
     }
 
-    // Llamada a n8n
     const n8nResponse = await fetch(process.env.N8N_WEBHOOK_URL, {
       method: 'POST',
       headers: {
@@ -77,7 +60,6 @@ app.post('/api/filter-lookup', async (req, res) => {
       })
     });
 
-    // Si n8n no responde bien
     if (!n8nResponse.ok) {
       console.error('n8n status:', n8nResponse.status);
       return res.status(502).json({
@@ -88,7 +70,6 @@ app.post('/api/filter-lookup', async (req, res) => {
 
     const data = await n8nResponse.json();
 
-    // Respuesta estándar para WordPress
     return res.json({
       success: data.success === true,
       sku: data.sku || null,
@@ -105,9 +86,6 @@ app.post('/api/filter-lookup', async (req, res) => {
   }
 });
 
-// ---------------------------
-// 4. Endpoint de chat opcional
-// ---------------------------
 app.post('/chat', async (req, res) => {
   const msg = req.body?.message || '';
   if (!msg.trim()) {
@@ -119,9 +97,6 @@ app.post('/chat', async (req, res) => {
   });
 });
 
-// ---------------------------
-// 5. 404 y errores generales
-// ---------------------------
 app.use((req, res) => {
   res.status(404).json({
     success: false,
@@ -138,9 +113,6 @@ app.use((err, req, res, _next) => {
   });
 });
 
-// ---------------------------
-// 6. Iniciar servidor
-// ---------------------------
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ ELIMFILTERS Proxy API activo en puerto ${PORT}`);
   console.log(`📊 Health: GET /health`);
@@ -148,9 +120,6 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`💬 Chat: POST /chat`);
 });
 
-// ---------------------------
-// 7. Shutdown ordenado
-// ---------------------------
 process.on('SIGTERM', () => process.exit(0));
 process.on('SIGINT', () => process.exit(0));
 
