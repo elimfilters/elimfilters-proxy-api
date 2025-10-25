@@ -62,7 +62,7 @@ function getElimfiltersPrefix(family, dutyLevel) {
   // Fallback (map completo)
   const map = {
     'ACEITE': 'EL8', 'OIL': 'EL8',
-    'COMBUSTIBLE': 'EF9', 'FUEL': 'EF9', 'SEPARADOR': 'EF9', 'SEPARATOR': 'EF9',
+    'COMBUSTIBLE': 'EF9', 'FUEL': 'EF9', 'SEPARADOR': 'ES9', 'SEPARATOR': 'ES9',
     'AIRE': 'EA1', 'AIR': 'EA1',
     'CABIN': 'EC1', 'CABIN AIR': 'EC1', 'AIRE_CABINA': 'EC1',
     'HYDRAULIC': 'EH6', 'HIDRAULICO': 'EH6',
@@ -70,7 +70,7 @@ function getElimfiltersPrefix(family, dutyLevel) {
     'AIR DRYER': 'ED4', 'AIR_DRYER': 'ED4',
     'KIT_DIESEL': 'EK5', 'KIT DIESEL': 'EK5',
     'KIT_GAS': 'EK3', 'KIT PASAJEROS': 'EK3',
-    'CARCASA': 'EC1', 'HOUSING': 'EC1',
+    'CARCASA': 'EA2', 'HOUSING': 'EA2',
     'TURBINA': 'ET9', 'TURBINE': 'ET9',
   };
 
@@ -176,12 +176,12 @@ function generateSKU(family, dutyLevel, oemCodes, crossReference, rawData) {
     details: `Source: ${baseCodeResult.source_type}, Code: ${baseCodeResult.baseCode}, Last4: ${baseCodeResult.last4}`
   });
 
-  // REGLA 1: Generar SKU
-  const sku = `${prefix}-${baseCodeResult.last4}`;
+  // REGLA 1: Generar SKU (SIN GUION)
+  const sku = `${prefix}${baseCodeResult.last4}`;
   rulesApplied.push({
     rule: 'regla_1_sku_generation',
     status: 'applied',
-    details: `SKU = ${prefix} - ${baseCodeResult.last4} = ${sku}`
+    details: `SKU = ${prefix}${baseCodeResult.last4} = ${sku}`
   });
 
   return {
