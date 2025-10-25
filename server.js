@@ -1,8 +1,9 @@
 /**
- * ELIMFILTERS Proxy API - v2.4.3
- * Estable y funcional para Railway
- * Corrige ERR_ERL_UNEXPECTED_X_FORWARDED_FOR
- * Valida conexión n8n y normaliza respuesta
+ * ELIMFILTERS Proxy API - v2.4.4
+ * Estable para Railway
+ * - Corrige error ERR_ERL_UNEXPECTED_X_FORWARDED_FOR (trust proxy)  :contentReference[oaicite:1]{index=1}
+ * - Evita crash del rate limiter detrás de proxy  :contentReference[oaicite:2]{index=2}
+ * - Devuelve errores claros si n8n falla (404 Not Found)  :contentReference[oaicite:3]{index=3}
  */
 
 require('dotenv').config();
@@ -14,11 +15,16 @@ const fetch = require('node-fetch');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ✅ Necesario en Railway (soluciona ERR_ERL_UNEXPECTED_X_FORWARDED_FOR)
+/**
+ * Railway está detrás de un proxy y agrega X-Forwarded-For.
+ * Si no confiamos en el proxy, express-rate-limit lanza:
+ * ERR_ERL_UNEXPECTED_X_FORWARDED_FOR  :contentReference[oaicite:4]{index=4}
+ * Esto lo arreglamos habilitando trust proxy ANTES de configurar el rate limit.
+ */
 app.set('trust proxy', 1);
 
 /**
- * Seguridad y configuración básica
+ * Middleware base
  */
 app.use(express.json());
 
@@ -31,9 +37,15 @@ app.use(cors({
   allowedHeaders: ['Content-Type']
 }));
 
+/**
+ * Límite de requests por IP.
+ * Con trust proxy activo, ya no truena el limiter.  :contentReference[oaicite:5]{index=5}
+ */
 app.use(rateLimit({
   windowMs: 60 * 1000, // 1 minuto
   max: 50,
+  standardHeaders: true,
+  legacyHeaders: false,
   message: {
     success: false,
     error: 'Too many requests',
@@ -49,7 +61,7 @@ app.get(['/health', '/healthz'], (_req, res) => {
     status: 'ok',
     timestamp: new Date().toISOString(),
     service: 'ELIMFILTERS Proxy API',
-    version: '2.4.3',
+    version: '2.4.4',
     endpoints: {
       health: 'GET /health',
       lookup: 'POST /api/v1/filters/lookup',
@@ -61,13 +73,33 @@ app.get(['/health', '/healthz'], (_req, res) => {
 /**
  * Raíz
  */
-app.get('/', (_req, res) => res.redirect('/health'));
+app.get('/', (_req, res) => {
+  res.redirect('/health');
+});
 
 /**
- * Endpoint principal /api/v1/filters/lookup
- * - Recibe código de búsqueda desde WordPress o Postman
- * - Envía a n8n vía webhook
- * - Retorna resultado limpio y normalizado
+ * Lookup principal
+ *
+ * Entrada esperada (desde WordPress o Postman):
+ * {
+ *   "code": "LF3000"
+ * }
+ *
+ * El servidor acepta varias llaves para flexibilidad:
+ *  - code
+ *  - query
+ *  - sku
+ *  - oem
+ *
+ * Envía ese valor a n8n como { query: "LF3000" }.
+ * n8n debe buscar en tu Sheet Master por:
+ *  - SKU
+ *  - OEM_CODES
+ *  - CROSS_REFERENCE
+ *
+ * Luego n8n responde con los datos del filtro.
+ * Nota importante: en los logs se vio que tu n8n respondió 404 Not Found,
+ * lo que indica que N8N_WEBHOOK_URL no apunta al webhook correcto.  :contentReference[oaicite:6]{index=6}
  */
 app.post('/api/v1/filters/lookup', async (req, res) => {
   try {
@@ -89,16 +121,17 @@ app.post('/api/v1/filters/lookup', async (req, res) => {
       });
     }
 
-    // Llamada al flujo n8n configurado
     const webhookUrl = process.env.N8N_WEBHOOK_URL;
     if (!webhookUrl) {
       return res.status(500).json({
         success: false,
         error: 'N8N_WEBHOOK_URL not configured in environment',
-        error_code: 'MISSING_WEBHOOK_URL'
+        error_code: 'MISSING_WEBHOOK_URL',
+        timestamp: new Date().toISOString()
       });
     }
 
+    // Llamar a n8n
     const n8nResponse = await fetch(webhookUrl, {
       method: 'POST',
       headers: {
@@ -112,11 +145,16 @@ app.post('/api/v1/filters/lookup', async (req, res) => {
       })
     });
 
+    // Si n8n devolvió 404 Not Found o similar, reflejar eso
     if (!n8nResponse.ok) {
-      console.error('n8n status:', n8nResponse.status, n8nResponse.statusText);
+      const statusText = n8nResponse.statusText || 'Unknown';
+      const statusCode = n8nResponse.status;
+      console.error('n8n status:', statusCode, statusText); // visto en logs 404 Not Found  :contentReference[oaicite:7]{index=7}
+
       return res.status(502).json({
         success: false,
         error: 'Upstream n8n error',
+        detail: `n8n responded ${statusCode} ${statusText}`,
         error_code: 'N8N_BAD_GATEWAY',
         timestamp: new Date().toISOString()
       });
@@ -124,6 +162,7 @@ app.post('/api/v1/filters/lookup', async (req, res) => {
 
     const data = await n8nResponse.json();
 
+    // Normalizamos nombres de campos para WordPress
     return res.json({
       success: data.success === true,
       sku: data.sku || data.SKU || null,
@@ -132,12 +171,14 @@ app.post('/api/v1/filters/lookup', async (req, res) => {
       oem_codes: data.oem_codes || data.OEM_CODES || null,
       cross_reference: data.cross_reference || data.CROSS_REFERENCE || null,
       pdf_url: data.pdf_url || data.PDF_URL || null,
+
+      // raw se deja para depuración en frontend interno mientras pruebas
       raw: data
     });
 
   } catch (err) {
     console.error('lookup error:', err);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: 'Internal Server Error',
       error_code: 'INTERNAL',
@@ -148,14 +189,17 @@ app.post('/api/v1/filters/lookup', async (req, res) => {
 
 /**
  * Chat de diagnóstico
+ * Sirve para probar POST sin pasar por n8n.
  */
 app.post('/chat', (req, res) => {
   const msg = req.body?.message || '';
   if (!msg.trim()) {
-    return res.status(400).json({ reply: 'Mensaje requerido' });
+    return res.status(400).json({
+      reply: 'Mensaje requerido'
+    });
   }
 
-  res.json({
+  return res.json({
     reply: 'Proxy activo y operativo',
     echo: msg,
     timestamp: new Date().toISOString()
@@ -163,7 +207,7 @@ app.post('/chat', (req, res) => {
 });
 
 /**
- * Controlador 404
+ * 404 controlado
  */
 app.use((req, res) => {
   res.status(404).json({
@@ -182,7 +226,7 @@ app.use((req, res) => {
 });
 
 /**
- * Manejador de errores global
+ * Manejador global de errores
  */
 app.use((err, req, res, _next) => {
   console.error('Unhandled error:', err);
@@ -195,10 +239,10 @@ app.use((err, req, res, _next) => {
 });
 
 /**
- * Inicialización
+ * Arranque del servidor
  */
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`✅ ELIMFILTERS Proxy API - v2.4.3`);
+  console.log(`✅ ELIMFILTERS Proxy API - v2.4.4`);
   console.log(`🚀 Server listening on port ${PORT}`);
   console.log(`📊 Health: GET /health`);
   console.log(`🔎 Lookup: POST /api/v1/filters/lookup`);
@@ -207,7 +251,7 @@ app.listen(PORT, '0.0.0.0', () => {
 });
 
 /**
- * Apagado limpio
+ * Shutdown ordenado
  */
 process.on('SIGTERM', () => process.exit(0));
 process.on('SIGINT', () => process.exit(0));
