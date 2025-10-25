@@ -1,3 +1,10 @@
+/**
+ * ELIMFILTERS Proxy API - v2.4.3
+ * Estable y funcional para Railway
+ * Corrige ERR_ERL_UNEXPECTED_X_FORWARDED_FOR
+ * Valida conexión n8n y normaliza respuesta
+ */
+
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -7,11 +14,11 @@ const fetch = require('node-fetch');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Necesario en Railway para que express-rate-limit no falle con ERR_ERL_UNEXPECTED_X_FORWARDED_FOR
+// ✅ Necesario en Railway (soluciona ERR_ERL_UNEXPECTED_X_FORWARDED_FOR)
 app.set('trust proxy', 1);
 
 /**
- * Seguridad básica y configuración
+ * Seguridad y configuración básica
  */
 app.use(express.json());
 
@@ -20,13 +27,13 @@ app.use(cors({
     'https://elimfilters.com',
     'https://www.elimfilters.com'
   ],
-  methods: ['GET','POST','OPTIONS'],
+  methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type']
 }));
 
 app.use(rateLimit({
-  windowMs: 60 * 1000,          // 1 minuto
-  max: 50,                      // 50 req/min por IP
+  windowMs: 60 * 1000, // 1 minuto
+  max: 50,
   message: {
     success: false,
     error: 'Too many requests',
@@ -35,15 +42,14 @@ app.use(rateLimit({
 }));
 
 /**
- * Healthcheck público
- * Confirma que el contenedor está vivo.
+ * Healthcheck
  */
 app.get(['/health', '/healthz'], (_req, res) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
     service: 'ELIMFILTERS Proxy API',
-    version: '2.4.2',
+    version: '2.4.3',
     endpoints: {
       health: 'GET /health',
       lookup: 'POST /api/v1/filters/lookup',
@@ -53,24 +59,18 @@ app.get(['/health', '/healthz'], (_req, res) => {
 });
 
 /**
- * Raíz redirige a /health
+ * Raíz
  */
-app.get('/', (_req, res) => {
-  res.redirect('/health');
-});
+app.get('/', (_req, res) => res.redirect('/health'));
 
 /**
- * Lookup principal.
- *
- * Flujo:
- * - El cliente (WordPress, Postman, etc) manda { code: "algo" } o { query: "algo" }.
- * - Este servidor toma ese valor, lo normaliza y lo reenvía a n8n.
- * - n8n busca en el Sheet Master por SKU, OEM_CODES o CROSS_REFERENCE y responde.
- * - Este servidor homologa los nombres de campos y responde al frontend en formato estable.
+ * Endpoint principal /api/v1/filters/lookup
+ * - Recibe código de búsqueda desde WordPress o Postman
+ * - Envía a n8n vía webhook
+ * - Retorna resultado limpio y normalizado
  */
 app.post('/api/v1/filters/lookup', async (req, res) => {
   try {
-    // aceptar distintas llaves del cliente
     const codeFromClient =
       req.body?.code ||
       req.body?.query ||
@@ -89,15 +89,24 @@ app.post('/api/v1/filters/lookup', async (req, res) => {
       });
     }
 
-    // llamada a n8n (usa la URL configurada en Railway -> N8N_WEBHOOK_URL)
-    const n8nResponse = await fetch(process.env.N8N_WEBHOOK_URL, {
+    // Llamada al flujo n8n configurado
+    const webhookUrl = process.env.N8N_WEBHOOK_URL;
+    if (!webhookUrl) {
+      return res.status(500).json({
+        success: false,
+        error: 'N8N_WEBHOOK_URL not configured in environment',
+        error_code: 'MISSING_WEBHOOK_URL'
+      });
+    }
+
+    const n8nResponse = await fetch(webhookUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'x-api-key': process.env.INTERNAL_API_KEY || ''
       },
       body: JSON.stringify({
-        query: cleanCode,          // n8n debe leer este campo como $json.query
+        query: cleanCode,
         source: 'elimfilters.com',
         ts: Date.now()
       })
@@ -115,18 +124,6 @@ app.post('/api/v1/filters/lookup', async (req, res) => {
 
     const data = await n8nResponse.json();
 
-    // data esperado desde n8n:
-    // {
-    //   "success": true,
-    //   "SKU": "ELIM-LF3000",
-    //   "FILTER_TYPE": "Lube Oil Filter",
-    //   "CROSS_REFERENCE": "Donaldson P550371; Baldwin BD103",
-    //   "OEM_CODES": "Cummins 3318853; Fleetguard LF3000",
-    //   "DESCRIPTION": "High efficiency oil filter...",
-    //   "PDF_URL": "https://elimfilters.com/.../ELIM-LF3000-spec.pdf"
-    // }
-
-    // normalización para WordPress / frontend
     return res.json({
       success: data.success === true,
       sku: data.sku || data.SKU || null,
@@ -135,14 +132,12 @@ app.post('/api/v1/filters/lookup', async (req, res) => {
       oem_codes: data.oem_codes || data.OEM_CODES || null,
       cross_reference: data.cross_reference || data.CROSS_REFERENCE || null,
       pdf_url: data.pdf_url || data.PDF_URL || null,
-
-      // raw solo para depuración
       raw: data
     });
 
   } catch (err) {
     console.error('lookup error:', err);
-    return res.status(500).json({
+    res.status(500).json({
       success: false,
       error: 'Internal Server Error',
       error_code: 'INTERNAL',
@@ -152,26 +147,23 @@ app.post('/api/v1/filters/lookup', async (req, res) => {
 });
 
 /**
- * Chat endpoint de diagnóstico.
- * Sirve para probar POST rápido sin pasar por n8n.
+ * Chat de diagnóstico
  */
 app.post('/chat', (req, res) => {
   const msg = req.body?.message || '';
   if (!msg.trim()) {
-    return res.status(400).json({
-      reply: 'Mensaje requerido'
-    });
+    return res.status(400).json({ reply: 'Mensaje requerido' });
   }
 
-  return res.json({
-    reply: 'Proxy activo',
+  res.json({
+    reply: 'Proxy activo y operativo',
     echo: msg,
     timestamp: new Date().toISOString()
   });
 });
 
 /**
- * 404 controlado
+ * Controlador 404
  */
 app.use((req, res) => {
   res.status(404).json({
@@ -190,7 +182,7 @@ app.use((req, res) => {
 });
 
 /**
- * Error handler general
+ * Manejador de errores global
  */
 app.use((err, req, res, _next) => {
   console.error('Unhandled error:', err);
@@ -203,10 +195,10 @@ app.use((err, req, res, _next) => {
 });
 
 /**
- * Arranque del servidor
+ * Inicialización
  */
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`✅ ELIMFILTERS Proxy API - v2.4.2`);
+  console.log(`✅ ELIMFILTERS Proxy API - v2.4.3`);
   console.log(`🚀 Server listening on port ${PORT}`);
   console.log(`📊 Health: GET /health`);
   console.log(`🔎 Lookup: POST /api/v1/filters/lookup`);
@@ -215,7 +207,7 @@ app.listen(PORT, '0.0.0.0', () => {
 });
 
 /**
- * Shutdown ordenado
+ * Apagado limpio
  */
 process.on('SIGTERM', () => process.exit(0));
 process.on('SIGINT', () => process.exit(0));
