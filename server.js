@@ -1,162 +1,116 @@
-
 /**
- * REST endpoint usado por chatbot y WP
+ * server.js - v2.3.0 ULTRA SIMPLIFICADO
+ * Versión mínima funcional para Railway
  */
+
+require('dotenv').config();
+const express = require('express');
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Middleware básico
+app.use(express.json());
+
+// CORS simple
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.status(204).end();
+  next();
+});
+
+// Health check
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    service: 'ELIMFILTERS Proxy API',
+    version: '2.3.0'
+  });
+});
+
+app.get('/healthz', (req, res) => res.send('ok'));
+app.get('/', (req, res) => res.redirect('/health'));
+
+// Endpoint principal (placeholder hasta conectar n8n)
 app.post('/api/v1/filters/search', async (req, res) => {
   try {
-    const q =
-      req.body?.body?.query ||
-      req.body?.query ||
-      req.body?.q ||
-      req.body?.message ||
-      '';
-    const sessionId = req.body?.sessionId || 'anon';
-    if (!q.trim()) return res.status(400).json({ success: false, error: 'Query required' });
-
-    const fx = await forwardToN8N(q, { sessionId, origin: req.headers.origin });
-    return res.status(fx.status).json(fx.body);
-  } catch (e) {
-    console.error('❌ Proxy /api/v1/filters/search error:', e);
-    return res.status(502).json({ success: false, error: 'proxy_failed' });
-  }
-});
-
-/**
- * APIs existentes (Sheets opcional)
- */
-app.get('/api/products', async (req, res) => {
-  try {
-    if (!sheetsInstance) return res.status(503).json({ success: false, error: 'Service unavailable' });
-    const query = req.query.q || '';
-    const products = await sheetsInstance.searchProducts(query);
-    res.json({ success: true, count: products.length, data: products });
-  } catch (error) {
-    console.error('❌ Error fetching products:', error);
-    res.status(500).json({ success: false, error: 'Error fetching products' });
-  }
-});
-
-app.get('/api/products/:sku', async (req, res) => {
-  try {
-    if (!sheetsInstance) return res.status(503).json({ success: false, error: 'Service unavailable' });
-    const { sku } = req.params;
-    const products = await sheetsInstance.searchProducts(sku);
-    if (products.length === 0) return res.status(404).json({ success: false, error: 'Product not found' });
-    res.json({ success: true, data: products[0] });
-  } catch (error) {
-    console.error('❌ Error fetching product:', error);
-    res.status(500).json({ success: false, error: 'Error fetching product' });
-  }
-});
-
-app.post('/api/detect-filter', async (req, res) => {
-  try {
-    if (!sheetsInstance) return res.status(503).json({ success: false, error: 'Service unavailable' });
-    const { query } = req.body;
-    if (!query || query.trim() === '') return res.status(400).json({ success: false, error: 'Query required' });
-    const result = await detectionService.detectFilter(query);
-    res.json({ success: true, data: result });
-  } catch (error) {
-    console.error('❌ Error detecting filter:', error);
-    res.status(500).json({ success: false, error: 'Error detecting filter' });
-  }
-});
-
-app.post('/api/generate-sku', async (req, res) => {
-  try {
-    if (!sheetsInstance) return res.status(503).json({ success: false, error: 'Service unavailable' });
-    const { filterType, family, specs, oemCodes, crossReference, rawData } = req.body;
-    if (!filterType || !family || !rawData) {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing fields',
-        message: 'Required: filterType, family, rawData'
-      });
-    }
-
-    const result = businessLogic.generateSKU(family, rawData.duty_level, specs || {}, oemCodes || [], crossReference || [], rawData);
+    const query = req.body?.query || req.body?.body?.query || '';
     
-    res.json({
-      success: true,
-      data: {
-        sku: result.sku,
-        filterType,
-        family,
-        dutyLevel: rawData.duty_level,
-        timestamp: new Date().toISOString(),
-        details: result.details || {}
-      }
-    });
-  } catch (error) {
-    console.error('❌ Error generating SKU:', error);
-    res.status(500).json({ success: false, error: 'Error generating SKU', message: error.message });
-  }
-});
-
-app.post('/api/process-filter', async (req, res) => {
-  try {
-    if (!sheetsInstance) return res.status(503).json({ success: false, error: 'Service unavailable' });
-    const { family, specs, oemCodes, crossReference, rawData } = req.body;
-    if (!family || !rawData) {
+    if (!query.trim()) {
       return res.status(400).json({
         success: false,
-        error: 'Missing fields',
-        message: 'Required: family, rawData'
+        error: 'Query required'
       });
     }
 
-    const processedData = businessLogic.processFilterData(family, specs || {}, oemCodes || [], crossReference || [], rawData);
-    res.json({ success: true, data: processedData });
+    // Por ahora retorna respuesta de éxito
+    // Cuando conectes n8n, aquí irá el forward
+    return res.json({
+      success: true,
+      message: 'API funcional - Pendiente conectar n8n',
+      query: query,
+      timestamp: new Date().toISOString()
+    });
+
   } catch (error) {
-    console.error('❌ Error processing filter data:', error);
-    res.status(500).json({ success: false, error: 'Error processing filter data' });
+    console.error('Error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
   }
 });
 
-// ============================================================================
-// Error handlers
-// ============================================================================
-app.use((req, res) => {
-  res.status(404).json({ success: false, error: 'Route not found' });
-});
-
-app.use((err, req, res, next) => {
-  console.error('❌ Unhandled error:', err);
-  res.status(500).json({ success: false, error: 'Internal server error', message: err.message });
-});
-
-// ============================================================================
-// START SERVER
-// ============================================================================
-async function safeInit() {
-  loadRulesMaster();
-
-  if (process.env.SKIP_SHEETS_INIT === 'true') {
-    console.warn('⚠️  SKIP_SHEETS_INIT=true → Google Sheets disabled');
-    return;
+// Chat endpoint
+app.post('/chat', async (req, res) => {
+  const message = req.body?.message || '';
+  if (!message) {
+    return res.status(400).json({ reply: 'Mensaje requerido' });
   }
   
-  try {
-    await initializeServices();
-  } catch (e) {
-    console.error('⚠️  Sheets init FAILED. Server up. Reason:', e?.message);
-  }
-}
+  return res.json({
+    reply: 'API funcional - Pendiente conectar n8n',
+    message: message
+  });
+});
 
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    error: 'Route not found',
+    path: req.path
+  });
+});
+
+// Error handler
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  res.status(500).json({
+    success: false,
+    error: 'Internal server error'
+  });
+});
+
+// Start server
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ Server listening on port ${PORT}`);
   console.log(`📊 Health: GET /health`);
-  console.log(`🔄 Proxy:  POST /api/v1/filters/search → ${N8N_URL || 'MISSING'}`);
-  safeInit();
+  console.log(`🔄 Search: POST /api/v1/filters/search`);
+  console.log(`💬 Chat: POST /chat`);
+  console.log(`⚠️  N8N integration: Pending configuration`);
 });
 
+// Graceful shutdown
 process.on('SIGTERM', () => {
-  console.log('✅ SIGTERM received');
+  console.log('SIGTERM received');
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
-  console.log('✅ SIGINT received');
+  console.log('SIGINT received');
   process.exit(0);
 });
 
