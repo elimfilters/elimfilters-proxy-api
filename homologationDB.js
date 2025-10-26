@@ -1,29 +1,40 @@
-// homologationDB.js (Base de Datos de Homologación - Fuente de Verdad)
+// homologationDB.js (Base de Datos de Homologación - ACTUALIZADO v2.2.0)
+
 /**
  * TABLA 1: ÍNDICE DE BÚSQUEDA RÁPIDA
  */
 const REFERENCE_INDEX = {
-    "33166": "D-F003-FUEL",
-    "FF5507": "D-F003-FUEL",
-    "P556245": "D-F003-FUEL",
-    "LF3000": "D-F001-OIL",
-    "P552100": "D-F001-OIL",
-    "51515": "D-F001-OIL",
-    "1R0739": "D-F001-OIL"
+    // Ejemplo 1: OIL HD con Donaldson
+    "P552100": "D-F001-OIL-HD",
+    "LF3000": "D-F001-OIL-HD",
+    "51515": "D-F001-OIL-HD",
+    "1R0739": "D-F001-OIL-HD",
+    
+    // Ejemplo 2: FUEL HD con Donaldson
+    "33166": "D-F003-FUEL-HD",
+    "FF5507": "D-F003-FUEL-HD",
+    "P556245": "D-F003-FUEL-HD",
+    
+    // Ejemplo 3: AIR LD con FRAM
+    "CA10234": "D-F005-AIR-LD",
+    "46515": "D-F005-AIR-LD",
+    "AF26392": "D-F005-AIR-LD"
 };
 
 /**
  * TABLA 2: REGISTRO MAESTRO DE ESPECIFICACIONES
+ * ACTUALIZADO con nuevos prefijos y reglas
  */
 const MASTER_DESIGN_DATA = {
-    "D-F001-OIL": {
-        design_id: "D-F001-OIL",
-        master_name: "Filtro de Aceite Donaldson - Serie 1",
-        filter_family: "ACEITE",
+    "D-F001-OIL-HD": {
+        design_id: "D-F001-OIL-HD",
+        sku: "EL82100", // NUEVO FORMATO
+        master_name: "Filtro de Aceite Donaldson - Serie 1 HD",
+        filter_family: "OIL",
         duty_level: "HD",
-        priority_reference: "P552100",
+        priority_reference: "P552100", // Donaldson para HD
         priority_brand: "DONALDSON",
-        all_cross_references: ["LF3000", "51515", "P552100", "1R0739"],
+        all_cross_references: ["P552100", "LF3000", "51515", "1R0739"],
         oem_codes: ["1R0739", "51515"],
         specs: {
             "Height (mm)": "142",
@@ -35,19 +46,21 @@ const MASTER_DESIGN_DATA = {
             "Spin-on": true,
             "Material": "Paper/Glass Fiber"
         },
-        created_at: "2024-01-01T00:00:00Z",
-        last_updated: "2024-10-16T00:00:00Z",
+        created_at: "2025-01-01T00:00:00Z",
+        last_updated: "2025-10-17T00:00:00Z",
         is_active: true,
-        version: 1
+        version: 2
     },
-    "D-F003-FUEL": {
-        design_id: "D-F003-FUEL",
-        master_name: "Filtro de Combustible Donaldson - Serie 3",
-        filter_family: "COMBUSTIBLE",
+    
+    "D-F003-FUEL-HD": {
+        design_id: "D-F003-FUEL-HD",
+        sku: "EF96245", // NUEVO FORMATO
+        master_name: "Filtro de Combustible Donaldson - Serie 3 HD",
+        filter_family: "FUEL",
         duty_level: "HD",
-        priority_reference: "P556245",
+        priority_reference: "P556245", // Donaldson para HD
         priority_brand: "DONALDSON",
-        all_cross_references: ["33166", "FF5507", "P556245"],
+        all_cross_references: ["P556245", "33166", "FF5507"],
         oem_codes: ["33166"],
         specs: {
             "Height (mm)": "177",
@@ -60,16 +73,40 @@ const MASTER_DESIGN_DATA = {
             "Spin-on": true,
             "Material": "Synthetic Fiber"
         },
-        created_at: "2024-01-01T00:00:00Z",
-        last_updated: "2024-10-16T00:00:00Z",
+        created_at: "2025-01-01T00:00:00Z",
+        last_updated: "2025-10-17T00:00:00Z",
         is_active: true,
-        version: 1
+        version: 2
+    },
+    
+    "D-F005-AIR-LD": {
+        design_id: "D-F005-AIR-LD",
+        sku: "EA10234", // NUEVO FORMATO
+        master_name: "Filtro de Aire FRAM - Serie 5 LD",
+        filter_family: "AIR",
+        duty_level: "LD",
+        priority_reference: "CA10234", // FRAM para LD
+        priority_brand: "FRAM",
+        all_cross_references: ["CA10234", "46515", "AF26392"],
+        oem_codes: ["46515"],
+        specs: {
+            "Height (mm)": "200",
+            "Outer Diameter (mm)": "135",
+            "Inner Diameter (mm)": "98",
+            "Filter Type": "Panel",
+            "Material": "Synthetic"
+        },
+        created_at: "2025-01-01T00:00:00Z",
+        last_updated: "2025-10-17T00:00:00Z",
+        is_active: true,
+        version: 2
     }
 };
 
 function validateMasterRecord(record, designId) {
     const requiredFields = [
         'design_id',
+        'sku',
         'master_name',
         'filter_family',
         'duty_level',
@@ -91,14 +128,17 @@ function validateMasterRecord(record, designId) {
         );
     }
     
-    const validDutyLevels = ['HD', 'STANDARD', 'LIGHT', 'HEAVY'];
+    const validDutyLevels = ['HD', 'LD'];
     if (!validDutyLevels.includes(record.duty_level)) {
         throw new Error(
-            `duty_level inválido para ${designId}: ${record.duty_level}`
+            `duty_level inválido para ${designId}: ${record.duty_level}. Debe ser HD o LD.`
         );
     }
     
-    const validFamilies = ['ACEITE', 'COMBUSTIBLE', 'AIRE', 'HIDRÁULICO'];
+    const validFamilies = ['OIL', 'FUEL', 'AIR', 'HYDRAULIC', 'CABIN', 'FUEL SEPARATOR', 
+                          'AIR DRYER', 'COOLANT', 'CARCAZA AIR FILTER', 'TURBINE SERIES', 
+                          'KITS SERIES HD', 'KITS SERIES LD'];
+    
     if (!validFamilies.includes(record.filter_family)) {
         throw new Error(
             `filter_family inválida para ${designId}: ${record.filter_family}`
@@ -172,6 +212,7 @@ async function findExactHomologation(normalizedCode) {
         masterDesignId: masterDesignId,
         rawData: {
             design_id: rawData.design_id,
+            sku: rawData.sku,
             master_name: rawData.master_name,
             filter_family: rawData.filter_family,
             duty_level: rawData.duty_level,
@@ -198,6 +239,7 @@ function listActiveDesigns() {
         .filter(([_, data]) => data.is_active)
         .map(([id, data]) => ({
             design_id: id,
+            sku: data.sku,
             name: data.master_name,
             family: data.filter_family,
             duty_level: data.duty_level
@@ -230,6 +272,7 @@ function validateDatabaseIntegrity() {
     }
     
     console.log("[DB] ✓ Base de datos íntegra y consistente");
+    console.log(`[DB] Total de diseños activos: ${listActiveDesigns().length}`);
     return true;
 }
 
