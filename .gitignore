@@ -13,3 +13,4 @@ npm-debug.log*
 .railway/
 test-results/
 *.tmp
+!PASO_1_REGLAS_MAESTRAS_v2.1.0.json
