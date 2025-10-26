@@ -1,217 +1,73 @@
-/**
- * ELIMFILTERS Proxy API - v3.0.0
- *
- * - Estable producción Railway
- * - Sin express-rate-limit (evita ERR_ERL_UNEXPECTED_X_FORWARDED_FOR)
- * - trust proxy activo
- * - Valida entrada según Reglas Maestras v2.1.0  (OEM Universe / validation / prefixes) :contentReference[oaicite:5]{index=5}
- * - Clasifica la referencia entrante (donaldson, fram, genérico) para trazabilidad interna :contentReference[oaicite:6]{index=6}
- * - Llama a n8n con { query } sin exponer estructura interna
- * - Normaliza SKU público (sin guiones)
- * - Devuelve campos limpios para WordPress
- */
-
+// server.js - ELIMFILTERS Proxy API - rules enforced
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const rateLimit = require('express-rate-limit');
 const fetch = require('node-fetch');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// -----------------------------------------------------------------------------
-// Reglas maestras (versión 2.1.0) embebidas. Estas reglas NO se pierden. :contentReference[oaicite:7]{index=7}
-// -----------------------------------------------------------------------------
-const MASTER_RULES = {
-  version: "2.1.0",
-  oem_universe: {
-    patterns: {
-      donaldson: {
-        // ejemplos: P552100, P164378, DBL123 :contentReference[oaicite:8]{index=8}
-        primary: [/^P\d{5,6}$/i, /^DBL/i, /^P[0-9]{4,7}$/i],
-        fallback: [/^P[0-9]+$/i],
-        brand: "DONALDSON",
-        duty: "HD"
-      },
-      fram: {
-        // ejemplos: PH8A, CA123, CF456, CH789 :contentReference[oaicite:9]{index=9}
-        primary: [/^(PH|CA|CF|CH)\d{3,6}$/i, /^PH[0-9]{1,5}$/i, /^CA[0-9]{3,6}$/i, /^CF[0-9]{3,6}$/i, /^CH[0-9]{3,6}$/i],
-        fallback: [],
-        brand: "FRAM",
-        duty: "LD"
-      },
-      generic: {
-        // ejemplos típicos HD/industrial: LF3620, 1R1808, FF5052 :contentReference[oaicite:10]{index=10}
-        primary: [/^[A-Z0-9]{3,10}$/i],
-        duty: "any"
-      }
-    },
-    validation: {
-      min_length: 3,
-      max_length: 10,
-      allow_special_chars: ["-", "_", "."],
-      must_contain: ["number"],
-      normalize_uppercase: true
-    }
-  },
-  rules: {
-    // SKU generation: PREFIX-LAST4  → ej: EF9-1234  según mapa de prefijos y los últimos 4 del código base. :contentReference[oaicite:11]{index=11}
-    regla_1_sku_generation: true
-  },
-  prefixes: {
-    // familias -> prefijos internos. Ejemplo: FUEL -> EF9, AIR -> EA1, etc. :contentReference[oaicite:12]{index=12}
-    ACEITE: "EL8",
-    OIL: "EL8",
-    COMBUSTIBLE: "EF9",
-    FUEL: "EF9",
-    SEPARADOR: "EF9",
-    SEPARATOR: "EF9",
-    AIRE: "EA1",
-    AIR: "EA1",
-    CABIN: "EC1",
-    "CABIN AIR": "EC1",
-    AIRE_CABINA: "EC1",
-    HYDRAULIC: "EH6",
-    HIDRAULICO: "EH6",
-    COOLANT: "EW7",
-    REFRIGERANTE: "EW7",
-    "AIR DRYER": "ED4",
-    AIR_DRYER: "ED4",
-    KIT_DIESEL: "EK5",
-    "KIT DIESEL": "EK5",
-    KIT_GAS: "EK3",
-    "KIT PASAJEROS": "EK3",
-    CARCASA: "EC1",
-    HOUSING: "EC1",
-    TURBINA: "ET9",
-    TURBINE: "ET9"
+/**
+ * 1. REGLAS MAESTRAS v2.1.0 (incrustadas)
+ * Estas reglas NO se deben borrar ni modificar sin aprobación.
+ * Sirven para generar y validar SKUs consistentes.
+ */
+const RULES = {
+  version: '2.1.0',
+  allowedChars: /^[A-Za-z0-9\-\s]+$/, // solo letras, números, guión y espacio
+  maxLen: 50,                          // no aceptamos códigos ilegales largos
+  families: {
+    OIL: 'EL8',
+    FUEL: 'EF9',
+    AIR: 'EA1',
+    CABIN: 'EC1',
+    HYDRAULIC: 'EH6',
+    COOLANT: 'EW7',
+    AIR_DRYER: 'ED4'
   }
 };
 
-// -----------------------------------------------------------------------------
-// Utils internos
-// -----------------------------------------------------------------------------
+// genera el SKU normalizado interno tipo "EL8-3000"
+// baseCode = código que escribió el usuario ("lf3000", "LF-3000", etc.)
+// familyHint = categoría opcional del filtro. Por ahora usamos "OIL" por defecto.
+function generateNormalizedSKU(baseCode, familyHint = 'OIL') {
+  if (!baseCode) return null;
 
-// Limpia el input que manda el cliente y lo normaliza según las reglas.
-// Requisitos: longitud entre 3 y 10, debe contener números, mayúsculas forzadas,
-// se permiten -, _, .
-function normalizeClientQuery(raw) {
-  const v = MASTER_RULES.oem_universe.validation;
+  // 1. limpiar: mayúsculas, sin espacios ni caracteres raros
+  const cleaned = String(baseCode)
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, ''); // quitamos todo excepto A-Z y 0-9
 
-  if (!raw || typeof raw !== 'string') return { ok: false, reason: 'EMPTY' };
+  if (!cleaned) return null;
 
-  let q = raw.trim();
+  // 2. prefijo según familia
+  const prefix = RULES.families[familyHint.toUpperCase()] || RULES.families.OIL;
 
-  // Forzar mayúsculas si la regla lo exige.
-  if (v.normalize_uppercase) {
-    q = q.toUpperCase();
-  }
+  // 3. últimos 4 dígitos/carácteres significativos
+  const last4 = cleaned.slice(-4);
 
-  // Validar longitud.
-  if (q.length < v.min_length) {
-    return { ok: false, reason: 'TOO_SHORT' };
-  }
-  if (q.length > v.max_length) {
-    return { ok: false, reason: 'TOO_LONG' };
-  }
-
-  // Validar caracteres permitidos:
-  // Permitimos A-Z 0-9 y los special chars listados.
-  const allowedSpecial = v.allow_special_chars.join('').replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
-  const regexAllowed = new RegExp(`^[A-Z0-9${allowedSpecial}]+$`);
-  if (!regexAllowed.test(q)) {
-    return { ok: false, reason: 'BAD_CHARS' };
-  }
-
-  // Debe contener al menos un dígito si "must_contain" incluye "number".
-  if (v.must_contain.includes("number")) {
-    if (!/[0-9]/.test(q)) {
-      return { ok: false, reason: 'NO_NUMBER' };
-    }
-  }
-
-  return { ok: true, value: q };
-}
-
-// Clasifica el código según patrones conocidos (Donaldson, Fram, genérico).
-// Uso: logging interno / trazabilidad / priorización futura. :contentReference[oaicite:13]{index=13}
-function classifyQuery(q) {
-  const { patterns } = MASTER_RULES.oem_universe;
-
-  // Donaldson
-  for (const rgx of patterns.donaldson.primary) {
-    if (rgx.test(q)) {
-      return { brand: patterns.donaldson.brand, duty: patterns.donaldson.duty, family: 'DONALDSON' };
-    }
-  }
-  for (const rgx of patterns.donaldson.fallback) {
-    if (rgx.test(q)) {
-      return { brand: patterns.donaldson.brand, duty: patterns.donaldson.duty, family: 'DONALDSON' };
-    }
-  }
-
-  // Fram
-  for (const rgx of patterns.fram.primary) {
-    if (rgx.test(q)) {
-      return { brand: patterns.fram.brand, duty: patterns.fram.duty, family: 'FRAM' };
-    }
-  }
-
-  // Genérico / HD / industrial
-  for (const rgx of patterns.generic.primary) {
-    if (rgx.test(q)) {
-      return { brand: 'GENERIC', duty: patterns.generic.duty, family: 'GENERIC' };
-    }
-  }
-
-  // Sin match conocido
-  return { brand: 'UNKNOWN', duty: 'any', family: 'UNKNOWN' };
-}
-
-// Normaliza SKU para exponerlo al cliente.
-// Regla de negocio: no mostrar guiones ni espacios al cliente final.
-function publicSkuFrom(rawSku) {
-  if (!rawSku) return null;
-  return String(rawSku).replace(/[\s-]+/g, '');
-}
-
-// Futuro: si un registro viene sin SKU desde n8n pero sí tenemos info técnica,
-// podríamos generar un SKU interno con prefijo + últimos 4 dígitos.
-// Basado en "regla_1_sku_generation" de las reglas maestras. :contentReference[oaicite:14]{index=14}
-function fallbackGeneratedSku(filterTypeText, anyCodeLike) {
-  if (!MASTER_RULES.rules.regla_1_sku_generation) return null;
-  if (!filterTypeText || !anyCodeLike) return null;
-
-  // Buscar prefijo según familia declarada (ACEITE/OIL -> EL8, FUEL -> EF9, etc.). :contentReference[oaicite:15]{index=15}
-  let prefix = null;
-  const ftUpper = filterTypeText.toUpperCase();
-  for (const [family, pref] of Object.entries(MASTER_RULES.prefixes)) {
-    if (ftUpper.includes(family)) {
-      prefix = pref;
-      break;
-    }
-  }
-  if (!prefix) {
-    // fallback a EL8 (aceite) si nada coincide. :contentReference[oaicite:16]{index=16}
-    prefix = 'EL8';
-  }
-
-  // Tomar últimos 4 dígitos de anyCodeLike.
-  const digits = (anyCodeLike.match(/\d+/g) || []).join('');
-  if (!digits) return `${prefix}-0000`;
-  const last4 = digits.slice(-4).padStart(4, '0');
-
+  // 4. SKU normalizado final
   return `${prefix}-${last4}`;
 }
 
-// -----------------------------------------------------------------------------
-// Config Express base
-// -----------------------------------------------------------------------------
+// validación básica de entrada del usuario
+function validateUserCode(raw) {
+  if (!raw) {
+    return { ok: false, reason: 'EMPTY' };
+  }
+  if (raw.length > RULES.maxLen) {
+    return { ok: false, reason: 'TOO_LONG' };
+  }
+  if (!RULES.allowedChars.test(raw)) {
+    return { ok: false, reason: 'BAD_CHARS' };
+  }
+  return { ok: true };
+}
 
-const appStartTs = Date.now();
-
-app.set('trust proxy', 1);
-
+/**
+ * 2. Seguridad básica y configuración HTTP
+ */
 app.use(express.json());
 
 app.use(cors({
@@ -219,228 +75,212 @@ app.use(cors({
     'https://elimfilters.com',
     'https://www.elimfilters.com'
   ],
-  methods: ['GET', 'POST', 'OPTIONS'],
+  methods: ['GET','POST','OPTIONS'],
   allowedHeaders: ['Content-Type']
 }));
 
-// -----------------------------------------------------------------------------
-// /health
-// -----------------------------------------------------------------------------
+app.use(rateLimit({
+  windowMs: 60 * 1000,
+  max: 50,
+  message: {
+    success: false,
+    error: 'Too many requests',
+    error_code: 'RATE_LIMIT'
+  }
+}));
 
+/**
+ * 3. Healthcheck
+ */
 app.get(['/health', '/healthz'], (_req, res) => {
   res.json({
     status: 'ok',
-    service: 'ELIMFILTERS Proxy API',
-    version: '3.0.0',
-    uptime_ms: Date.now() - appStartTs,
-    rules_version: MASTER_RULES.version,
     timestamp: new Date().toISOString(),
+    service: 'ELIMFILTERS Proxy API',
+    version: '2.4.2 + rules 2.1.0',
     endpoints: {
       health: 'GET /health',
       lookup: 'POST /api/v1/filters/lookup',
       chat: 'POST /chat'
-    }
+    },
+    rules_version: RULES.version
   });
 });
 
-// raíz -> /health
 app.get('/', (_req, res) => {
   res.redirect('/health');
 });
 
-// -----------------------------------------------------------------------------
-// /api/v1/filters/lookup
-// -----------------------------------------------------------------------------
-
+/**
+ * 4. Lookup principal
+ * Recibe el código del cliente desde WordPress.
+ * Aplica validación y normalización.
+ * Llama a n8n con ambos valores:
+ *   - raw_code: lo que escribió el cliente
+ *   - normalized_sku: SKU interno generado (prefijo + últimos 4)
+ * n8n usará esto para buscar en la hoja.
+ */
 app.post('/api/v1/filters/lookup', async (req, res) => {
   try {
-    // 1. Aceptamos múltiples campos de entrada
-    const codeFromClient =
+    const incoming =
       req.body?.code ||
       req.body?.query ||
       req.body?.sku ||
       req.body?.oem ||
       '';
 
-    // 2. Normalizamos según reglas maestras
-    const norm = normalizeClientQuery(codeFromClient);
-    if (!norm.ok) {
+    const userCode = String(incoming || '').trim();
+
+    // validar entrada contra las reglas
+    const validity = validateUserCode(userCode);
+    if (!validity.ok) {
+      if (validity.reason === 'EMPTY') {
+        return res.status(400).json({
+          success: false,
+          error: 'code is required',
+          error_code: 'MISSING_CODE',
+          rules_version: RULES.version,
+          timestamp: new Date().toISOString()
+        });
+      }
+      if (validity.reason === 'TOO_LONG') {
+        return res.status(400).json({
+          success: false,
+          error: 'code too long',
+          error_code: 'CODE_TOO_LONG',
+          maxLen: RULES.maxLen,
+          rules_version: RULES.version,
+          timestamp: new Date().toISOString()
+        });
+      }
+      if (validity.reason === 'BAD_CHARS') {
+        return res.status(400).json({
+          success: false,
+          error: 'invalid characters',
+          error_code: 'INVALID_CHARS',
+          allowed: 'A-Z 0-9 - space',
+          rules_version: RULES.version,
+          timestamp: new Date().toISOString()
+        });
+      }
+      // fallback
       return res.status(400).json({
         success: false,
-        error: 'INVALID_QUERY',
-        reason: norm.reason,
-        message: 'Input does not meet validation policy',
-        rules_version: MASTER_RULES.version,
+        error: 'invalid code',
+        error_code: 'INVALID_CODE',
+        rules_version: RULES.version,
         timestamp: new Date().toISOString()
       });
     }
 
-    const normalizedQuery = norm.value;
+    // generar SKU normalizado interno (ej. "EL8-3000")
+    // por ahora familyHint fijo "OIL". Luego podremos mejorarlo.
+    const normalizedSku = generateNormalizedSKU(userCode, 'OIL');
 
-    // 3. Clasificamos el código para trazabilidad
-    const classification = classifyQuery(normalizedQuery);
-
-    // 4. Verificamos que la URL del webhook esté configurada
-    const webhookUrl = process.env.N8N_WEBHOOK_URL;
-    if (!webhookUrl) {
-      return res.status(500).json({
+    // si por alguna razón no se pudo generar
+    if (!normalizedSku) {
+      return res.status(400).json({
         success: false,
-        error: 'MISSING_WEBHOOK_URL',
-        message: 'N8N_WEBHOOK_URL not configured',
-        rules_version: MASTER_RULES.version,
+        error: 'unable to normalize code',
+        error_code: 'NORMALIZATION_FAILED',
+        rules_version: RULES.version,
         timestamp: new Date().toISOString()
       });
     }
 
-    // 5. Llamamos a n8n con el query normalizado
-    const n8nResponse = await fetch(webhookUrl, {
+    // llamada a n8n
+    const n8nResp = await fetch(process.env.N8N_WEBHOOK_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'x-api-key': process.env.INTERNAL_API_KEY || ''
       },
       body: JSON.stringify({
-        query: normalizedQuery,
+        raw_code: userCode,          // exactamente lo que entró del usuario
+        normalized_sku: normalizedSku, // SKU calculado con reglas
         source: 'elimfilters.com',
-        // logging metadata
-        duty_hint: classification.duty || null,
-        brand_hint: classification.brand || null,
         ts: Date.now()
       })
     });
 
-    if (!n8nResponse.ok) {
-      const statusText = n8nResponse.statusText || 'Unknown';
-      const statusCode = n8nResponse.status;
-
-      console.error('n8n status:', statusCode, statusText);
-
+    if (!n8nResp.ok) {
+      console.error('n8n status:', n8nResp.status, n8nResp.statusText);
       return res.status(502).json({
         success: false,
-        error: 'N8N_BAD_GATEWAY',
-        detail: `n8n responded ${statusCode} ${statusText}`,
-        rules_version: MASTER_RULES.version,
+        error: 'Upstream n8n error',
+        error_code: 'N8N_BAD_GATEWAY',
+        rules_version: RULES.version,
         timestamp: new Date().toISOString()
       });
     }
 
-    // 6. Interpretamos respuesta de n8n
-    const data = await n8nResponse.json();
+    const data = await n8nResp.json();
 
-    // sku crudo como viene del sheet
-    const rawSku = data.sku || data.SKU || '';
-
-    // sku público ya limpio (sin guiones ni espacios)
-    let publicSku = publicSkuFrom(rawSku);
-
-    // fallback: si n8n no trae SKU pero sí trae tipo y refs,
-    // generamos un SKU provisional usando prefijo+last4.
-    if (!publicSku) {
-      const anyRefCode =
-        data.CROSS_REFERENCE ||
-        data.cross_reference ||
-        data.OEM_CODES ||
-        data.oem_codes ||
-        normalizedQuery;
-
-      const typeGuess =
-        data.filter_type ||
-        data.FILTER_TYPE ||
-        '';
-
-      const fallbackSku = fallbackGeneratedSku(typeGuess, anyRefCode);
-      publicSku = fallbackSku ? publicSkuFrom(fallbackSku) : null;
-    }
-
-    const filterType =
-      data.filter_type ||
-      data.FILTER_TYPE ||
-      null;
-
-    const description =
-      data.description ||
-      data.DESCRIPTION ||
-      null;
-
-    const oemCodes =
-      data.oem_codes ||
-      data.OEM_CODES ||
-      null;
-
-    const crossRef =
-      data.cross_reference ||
-      data.CROSS_REFERENCE ||
-      null;
-
-    const pdfUrl =
-      data.pdf_url ||
-      data.PDF_URL ||
-      null;
-
-    // 7. Respuesta final estandarizada
+    // construir respuesta pública
+    // IMPORTANTE:
+    // - No forzamos ningún formato aquí.
+    // - Lo que llegue en data.* debe venir ya correcto desde n8n
+    //   según las reglas: sin contaminar catálogo público.
     return res.json({
       success: data.success === true,
-      sku: publicSku,
-      filter_type: filterType,
-      description: description,
-      oem_codes: oemCodes,
-      cross_reference: crossRef,
-      pdf_url: pdfUrl,
+      sku: data.sku || data.SKU || null,
+      filter_type: data.filter_type || data.FILTER_TYPE || null,
+      description: data.description || data.DESCRIPTION || null,
+      oem_codes: data.oem_codes || data.OEM_CODES || null,
+      cross_reference: data.cross_reference || data.CROSS_REFERENCE || null,
+      pdf_url: data.pdf_url || data.PDF_URL || null,
 
-      // Metadata técnica para auditoría interna / debug
-      meta: {
-        rules_version: MASTER_RULES.version,
-        classification,
-        input_original: codeFromClient,
-        input_normalized: normalizedQuery,
-        rawSku
-      }
+      // diagnóstico opcional
+      rules_version: RULES.version,
+      normalized_query_used: normalizedSku,
+      raw_query_used: userCode,
+
+      // nunca mostrar raw al usuario final en frontend,
+      // pero lo devolvemos aquí para que tú puedas auditar en consola.
+      raw: data
     });
 
   } catch (err) {
     console.error('lookup error:', err);
     return res.status(500).json({
       success: false,
-      error: 'INTERNAL',
-      message: 'Internal Server Error',
-      rules_version: MASTER_RULES.version,
+      error: 'Internal Server Error',
+      error_code: 'INTERNAL',
+      rules_version: RULES.version,
       timestamp: new Date().toISOString()
     });
   }
 });
 
-// -----------------------------------------------------------------------------
-// /chat  (diagnóstico interno simple, no toca n8n)
-// -----------------------------------------------------------------------------
-
+/**
+ * 5. Chat de diagnóstico opcional
+ */
 app.post('/chat', (req, res) => {
   const msg = req.body?.message || '';
   if (!msg.trim()) {
     return res.status(400).json({
-      reply: 'Mensaje requerido',
-      rules_version: MASTER_RULES.version
+      reply: 'Mensaje requerido'
     });
   }
 
-  res.json({
-    reply: 'Proxy activo y operativo',
+  return res.json({
+    reply: 'Proxy active',
     echo: msg,
-    rules_version: MASTER_RULES.version,
     timestamp: new Date().toISOString()
   });
 });
 
-// -----------------------------------------------------------------------------
-// 404 controlado
-// -----------------------------------------------------------------------------
-
+/**
+ * 6. Catch-all 404
+ */
 app.use((req, res) => {
   res.status(404).json({
     success: false,
-    error: 'ROUTE_NOT_FOUND',
+    error: 'Route not found',
+    error_code: 'ROUTE_NOT_FOUND',
     path: req.path,
     method: req.method,
-    rules_version: MASTER_RULES.version,
+    rules_version: RULES.version,
     timestamp: new Date().toISOString(),
     available_routes: {
       health: 'GET /health',
@@ -450,36 +290,32 @@ app.use((req, res) => {
   });
 });
 
-// -----------------------------------------------------------------------------
-// Error handler global
-// -----------------------------------------------------------------------------
-
+/**
+ * 7. Error handler
+ */
 app.use((err, req, res, _next) => {
   console.error('Unhandled error:', err);
   res.status(500).json({
     success: false,
-    error: 'INTERNAL',
-    message: 'Internal Server Error',
-    rules_version: MASTER_RULES.version,
+    error: 'Internal Server Error',
+    error_code: 'INTERNAL',
+    rules_version: RULES.version,
     timestamp: new Date().toISOString()
   });
 });
 
-// -----------------------------------------------------------------------------
-// Arranque
-// -----------------------------------------------------------------------------
-
+/**
+ * 8. Start server
+ */
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`✅ ELIMFILTERS Proxy API - v3.0.0`);
-  console.log(`🚀 Server listening on port ${PORT}`);
+  console.log(`✅ ELIMFILTERS Proxy API with rules ${RULES.version}`);
+  console.log(`🚀 Listening on port ${PORT}`);
   console.log(`📊 Health: GET /health`);
   console.log(`🔎 Lookup: POST /api/v1/filters/lookup`);
   console.log(`💬 Chat: POST /chat`);
-  console.log(`🌐 N8N Integration: forwarding 'query' to ${process.env.N8N_WEBHOOK_URL}`);
-  console.log(`📐 Rules version: ${MASTER_RULES.version} (embedded)`);
+  console.log(`🌐 n8n webhook: ${process.env.N8N_WEBHOOK_URL}`);
 });
 
-// Shutdown ordenado
 process.on('SIGTERM', () => process.exit(0));
 process.on('SIGINT', () => process.exit(0));
 
