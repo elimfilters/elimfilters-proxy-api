@@ -56,38 +56,4 @@ Debe mostrar: `"version": "3.0.0"`
 ---
 <!-- Trigger rebuild 2025-10-29 -->
 ```
-
----
-
-## 🎯 PASO A PASO MUY SIMPLE
-
-### 1. En GitHub, donde estás viendo el README.md:
-
-**Click en el lápiz** ✏️ (arriba a la derecha)
-
-### 2. Verás el contenido del README en modo edición
-
-Usa las flechas del teclado o scroll para ir **hasta el final** (la última línea)
-
-### 3. Al final del archivo, agrega:
-```
----
-<!-- Trigger rebuild 2025-10-29 -->
-```
-
-**Se verá así:**
-```
-... (contenido anterior del README)
-└── REGLAS_MAESTRAS.json    (v2.2.3) ✅
-```
-
-**[AQUÍ AGREGAS LAS DOS LÍNEAS]:**
-```
----
-<!-- Trigger rebuild 2025-10-29 -->
-```
-
-### 4. Scroll down y en el cuadro de texto escribe:
-```
 Trigger rebuild
-Total: 18 archivos (sin archivos extras innecesarios)
