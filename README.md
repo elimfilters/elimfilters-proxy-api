@@ -55,5 +55,3 @@ Debe mostrar: `"version": "3.0.0"`
 ```
 ---
 <!-- Trigger rebuild 2025-10-29 -->
-```
-Trigger rebuild
