@@ -1,0 +1,316 @@
+{
+  "version": "2.2.0",
+  "correctionVersion": "2.2.3",
+  "lastUpdate": "2025-10-29",
+  "description": "Reglas oficiales CORREGIDAS para generación de SKUs ELIMFILTERS",
+  "totalRules": 17,
+  "changes": [
+    "OIL|LD: EL9 → EL8",
+    "FUEL|HD: EF8 → EF9",
+    "AIRE|LD: EA2 → EA1",
+    "CABIN|HD: EC2 → EC1",
+    "AIR DRYER|HD: ED1 → ED4",
+    "COOLANT|HD: ET8 → EW7",
+    "CARCAZA AIR FILTER|HD: EZ1 → EA2",
+    "TURBINE SERIES|HD: EB1 → ET9",
+    "KITS SERIES HD|HD: EK8 → EK5",
+    "KITS SERIES LD|LD: EK9 → EK3",
+    "Eliminadas 5 reglas LD que no existen"
+  ],
+  
+  "rules": [
+    {
+      "id": "RULE_OIL_ALL",
+      "family": "OIL",
+      "duties": ["HD", "LD"],
+      "prefix": "EL8",
+      "description": "Oil Filter - Same prefix for HD and LD",
+      "enabled": true,
+      "priority": 1,
+      "note": "Ambos HD y LD usan EL8"
+    },
+    {
+      "id": "RULE_FUEL_ALL",
+      "family": "FUEL",
+      "duties": ["HD", "LD"],
+      "prefix": "EF9",
+      "description": "Fuel Filter - Same prefix for HD and LD",
+      "enabled": true,
+      "priority": 2,
+      "note": "Ambos HD y LD usan EF9"
+    },
+    {
+      "id": "RULE_AIRE_ALL",
+      "family": "AIRE",
+      "duties": ["HD", "LD"],
+      "prefix": "EA1",
+      "description": "Air Filter - Same prefix for HD and LD",
+      "enabled": true,
+      "priority": 3,
+      "note": "Ambos HD y LD usan EA1"
+    },
+    {
+      "id": "RULE_CABIN_ALL",
+      "family": "CABIN",
+      "duties": ["HD", "LD"],
+      "prefix": "EC1",
+      "description": "Cabin Filter - Same prefix for HD and LD",
+      "enabled": true,
+      "priority": 4,
+      "note": "Ambos HD y LD usan EC1"
+    },
+    {
+      "id": "RULE_FUEL_SEPARATOR_HD",
+      "family": "FUEL SEPARATOR",
+      "duties": ["HD"],
+      "prefix": "ES9",
+      "description": "Fuel Water Separator - HD only",
+      "enabled": true,
+      "priority": 5,
+      "note": "Solo existe versión HD"
+    },
+    {
+      "id": "RULE_AIR_DRYER_HD",
+      "family": "AIR DRYER",
+      "duties": ["HD"],
+      "prefix": "ED4",
+      "description": "Air Dryer - HD only",
+      "enabled": true,
+      "priority": 6,
+      "note": "Solo existe versión HD"
+    },
+    {
+      "id": "RULE_HIDRAULIC_HD",
+      "family": "HIDRAULIC",
+      "duties": ["HD"],
+      "prefix": "EH6",
+      "description": "Hydraulic Filter - HD only",
+      "enabled": true,
+      "priority": 7,
+      "note": "Solo existe versión HD"
+    },
+    {
+      "id": "RULE_COOLANT_HD",
+      "family": "COOLANT",
+      "duties": ["HD"],
+      "prefix": "EW7",
+      "description": "Coolant Filter - HD only",
+      "enabled": true,
+      "priority": 8,
+      "note": "Solo existe versión HD"
+    },
+    {
+      "id": "RULE_CARCAZA_HD",
+      "family": "CARCAZA AIR FILTER",
+      "duties": ["HD"],
+      "prefix": "EA2",
+      "description": "Air Filter Housing - HD only",
+      "enabled": true,
+      "priority": 9,
+      "note": "Solo existe versión HD"
+    },
+    {
+      "id": "RULE_TURBINE_HD",
+      "family": "TURBINE SERIES",
+      "duties": ["HD"],
+      "prefix": "ET9",
+      "description": "Turbine Series - HD only",
+      "enabled": true,
+      "priority": 10,
+      "note": "Solo existe versión HD"
+    },
+    {
+      "id": "RULE_KITS_HD",
+      "family": "KITS SERIES HD",
+      "duties": ["HD"],
+      "prefix": "EK5",
+      "description": "Kits Series Heavy Duty",
+      "enabled": true,
+      "priority": 11,
+      "note": "Familia específica para HD"
+    },
+    {
+      "id": "RULE_KITS_LD",
+      "family": "KITS SERIES LD",
+      "duties": ["LD"],
+      "prefix": "EK3",
+      "description": "Kits Series Light Duty",
+      "enabled": true,
+      "priority": 12,
+      "note": "Familia específica para LD"
+    }
+  ],
+  
+  "decisionTable": {
+    "OIL|HD": "EL8",
+    "OIL|LD": "EL8",
+    "FUEL|HD": "EF9",
+    "FUEL|LD": "EF9",
+    "AIRE|HD": "EA1",
+    "AIRE|LD": "EA1",
+    "CABIN|HD": "EC1",
+    "CABIN|LD": "EC1",
+    "FUEL SEPARATOR|HD": "ES9",
+    "AIR DRYER|HD": "ED4",
+    "HIDRAULIC|HD": "EH6",
+    "COOLANT|HD": "EW7",
+    "CARCAZA AIR FILTER|HD": "EA2",
+    "TURBINE SERIES|HD": "ET9",
+    "KITS SERIES HD|HD": "EK5",
+    "KITS SERIES LD|LD": "EK3"
+  },
+  
+  "examples": [
+    {
+      "oem_code": "P552100",
+      "family": "OIL",
+      "duty": "HD",
+      "sku": "EL82100",
+      "rule": "RULE_OIL_ALL"
+    },
+    {
+      "oem_code": "P550949",
+      "family": "OIL",
+      "duty": "LD",
+      "sku": "EL80949",
+      "rule": "RULE_OIL_ALL"
+    },
+    {
+      "oem_code": "CA10234",
+      "family": "FUEL",
+      "duty": "HD",
+      "sku": "EF90234",
+      "rule": "RULE_FUEL_ALL"
+    },
+    {
+      "oem_code": "PH8A",
+      "family": "FUEL",
+      "duty": "LD",
+      "sku": "EF9008A",
+      "rule": "RULE_FUEL_ALL"
+    },
+    {
+      "oem_code": "P181080",
+      "family": "AIRE",
+      "duty": "HD",
+      "sku": "EA11080",
+      "rule": "RULE_AIRE_ALL"
+    },
+    {
+      "oem_code": "AF25667",
+      "family": "AIRE",
+      "duty": "LD",
+      "sku": "EA15667",
+      "rule": "RULE_AIRE_ALL"
+    },
+    {
+      "oem_code": "87139-07010",
+      "family": "CABIN",
+      "duty": "HD",
+      "sku": "EC17010",
+      "rule": "RULE_CABIN_ALL"
+    },
+    {
+      "oem_code": "CF10456",
+      "family": "CABIN",
+      "duty": "LD",
+      "sku": "EC10456",
+      "rule": "RULE_CABIN_ALL"
+    },
+    {
+      "oem_code": "P551313",
+      "family": "FUEL SEPARATOR",
+      "duty": "HD",
+      "sku": "ES91313",
+      "rule": "RULE_FUEL_SEPARATOR_HD"
+    },
+    {
+      "oem_code": "AD-2001",
+      "family": "AIR DRYER",
+      "duty": "HD",
+      "sku": "ED42001",
+      "rule": "RULE_AIR_DRYER_HD"
+    },
+    {
+      "oem_code": "HF35000",
+      "family": "HIDRAULIC",
+      "duty": "HD",
+      "sku": "EH65000",
+      "rule": "RULE_HIDRAULIC_SPLIT"
+    },
+    {
+      "oem_code": "CW-123",
+      "family": "COOLANT",
+      "duty": "HD",
+      "sku": "EW70123",
+      "rule": "RULE_COOLANT_HD"
+    },
+    {
+      "oem_code": "CA-456",
+      "family": "CARCAZA AIR FILTER",
+      "duty": "HD",
+      "sku": "EA20456",
+      "rule": "RULE_CARCAZA_HD"
+    },
+    {
+      "oem_code": "TB-789",
+      "family": "TURBINE SERIES",
+      "duty": "HD",
+      "sku": "ET90789",
+      "rule": "RULE_TURBINE_HD"
+    },
+    {
+      "oem_code": "KIT-555",
+      "family": "KITS SERIES HD",
+      "duty": "HD",
+      "sku": "EK50555",
+      "rule": "RULE_KITS_HD"
+    },
+    {
+      "oem_code": "KIT-666",
+      "family": "KITS SERIES LD",
+      "duty": "LD",
+      "sku": "EK30666",
+      "rule": "RULE_KITS_LD"
+    }
+  ],
+  
+  "familiesWithSamePrefix": [
+    "OIL (EL8 para HD y LD)",
+    "FUEL (EF9 para HD y LD)",
+    "AIRE (EA1 para HD y LD)",
+    "CABIN (EC1 para HD y LD)"
+  ],
+  
+  "familiesWithDifferentPrefixes": [
+    "HIDRAULIC (EH6 para HD)"
+  ],
+  
+  "familiesHDOnly": [
+    "FUEL SEPARATOR (ES9)",
+    "AIR DRYER (ED4)",
+    "COOLANT (EW7)",
+    "CARCAZA AIR FILTER (EA2)",
+    "TURBINE SERIES (ET9)"
+  ],
+  
+  "prefixMapping": {
+    "EL8": ["OIL|HD", "OIL|LD"],
+    "EF9": ["FUEL|HD", "FUEL|LD"],
+    "EA1": ["AIRE|HD", "AIRE|LD"],
+    "EC1": ["CABIN|HD", "CABIN|LD"],
+    "ES9": ["FUEL SEPARATOR|HD"],
+    "ED4": ["AIR DRYER|HD"],
+    "EH6": ["HIDRAULIC|HD"],
+    "EW7": ["COOLANT|HD"],
+    "EA2": ["CARCAZA AIR FILTER|HD"],
+    "ET9": ["TURBINE SERIES|HD"],
+    "EK5": ["KITS SERIES HD|HD"],
+    "EK3": ["KITS SERIES LD|LD"]
+  },
+  
+  "allPrefixes": [
+    "EL8", "EF9", "EA1", "EC1", "ES9", "ED4", 
+    "EH6", "EW7", "EA2", "ET9", "EK5", "EK3"
+  ]
+}
