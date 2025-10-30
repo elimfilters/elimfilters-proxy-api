@@ -1,4 +1,9 @@
-// homologationDB.js — Placeholder sin IA (si no lo usas puedes eliminar este archivo)
-// Incluye helpers simples para mapear equivalencias si más adelante decides usarlos.
-function mapSku(sku) { return sku; }
+// homologationDB.js — mapeo simple de SKU
+// Ajusta aquí si tienes prefijos/familias.
+function mapSku(input) {
+  // Normalización básica: alfanumérico en mayúsculas
+  const s = String(input || '').replace(/[^A-Za-z0-9]/g,'').toUpperCase();
+  return s;
+}
+
 module.exports = { mapSku };
