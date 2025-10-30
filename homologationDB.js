@@ -1,44 +1,27 @@
-// homologationDB.js — CONCATENACIÓN LITERAL: prefix + core4 (sin colapsar)
-const fs = require('fs');
-const path = require('path');
+// --- reemplaza estas utilidades en homologationDB.js ---
 
-const normalize = s => String(s || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
-const coreLast4 = src => normalize(src).slice(-4).padStart(4, '0');
+const clean = s => String(s ?? '').toUpperCase().replace(/[^0-9A-Z]/g, '');
 
-let _RULES = null;
-function loadRules() {
-  if (_RULES) return _RULES;
-  const candidates = [
-    path.resolve(__dirname, 'REGLAS MAESTRAS'),
-    path.resolve(__dirname, 'config', 'REGLAS_MAESTRAS.json'),
-  ];
-  let text = null, used = null;
-  for (const p of candidates) if (fs.existsSync(p)) { text = fs.readFileSync(p, 'utf8'); used = p; break; }
-  if (!text) throw new Error('REGLAS MAESTRAS no encontrado');
-  try { _RULES = JSON.parse(text); } catch (e) { throw new Error(`REGLAS MAESTRAS inválido (${used}): ${e.message}`); }
-  return _RULES;
-}
+// Core = 4 dígitos. Si hay sufijo de letras (…\d+[A-Z]+$), tomar los dígitos
+// inmediatamente antes de las letras. Si no hay letras al final, tomar la
+// última racha de dígitos al final. Pad a 4 con ceros por la izquierda.
+function coreNumeric4(src) {
+  const c = clean(src);
 
-function resolvePrefix(family, duty) {
-  const dt = (loadRules().decisionTable || {});
-  return dt[`${String(family||'').toUpperCase()}|${String(duty||'').toUpperCase()}`] || null;
-}
-
-// Concatenación estricta, sin trims ni replaces
-function joinPrefixCore(prefix, core) {
-  return `${prefix}${core}`;
-}
-
-function generateSkuFrom(sourceCode, ctx = {}) {
-  const core = coreLast4(sourceCode);              // ej: 1R1808 → 1808
-  const prefix = resolvePrefix(ctx.family, ctx.duty);
-  if (!prefix) {
-    console.warn('[SKU RULES] Prefijo no resuelto. Fallback EO/EX.', { family: ctx.family, duty: ctx.duty });
-    return joinPrefixCore(ctx.type === 'OEM' ? 'EO' : 'EX', core);
+  // caso 1: termina en letras → capturar dígitos justo antes de las letras
+  let m = c.match(/(\d+)[A-Z]+$/);
+  if (m && m[1]) {
+    const d = m[1];
+    return d.slice(-4).padStart(4, '0');
   }
-  // NUNCA colapsar dígitos; siempre prefix + core literal
-  const sku = joinPrefixCore(prefix, core);
-  return sku;
-}
 
-module.exports = { generateSkuFrom, loadRules };
+  // caso 2: termina en dígitos → tomar esa racha final
+  m = c.match(/(\d+)$/);
+  if (m && m[1]) {
+    const d = m[1];
+    return d.slice(-4).padStart(4, '0');
+  }
+
+  // sin dígitos → core 0000
+  return '0000';
+}
