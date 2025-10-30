@@ -1,9 +1,19 @@
-// homologationDB.js — mapeo simple de SKU
-// Ajusta aquí si tienes prefijos/familias.
-function mapSku(input) {
-  // Normalización básica: alfanumérico en mayúsculas
-  const s = String(input || '').replace(/[^A-Za-z0-9]/g,'').toUpperCase();
-  return s;
+// homologationDB.js — genera SKU propio a partir de códigos OEM o CrossRef
+function normalize(s) {
+  return String(s || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
 }
 
-module.exports = { mapSku };
+/**
+ * Genera SKU basado en un código de origen.
+ * - OEM → prefijo EO
+ * - XREF → prefijo EX
+ * - Se trunca si excede 18 caracteres
+ */
+function generateSkuFrom(sourceCode, ctx = {}) {
+  const src = normalize(sourceCode);
+  const prefix = ctx.type === 'OEM' ? 'EO' : 'EX';
+  const core = src.slice(0, 18);
+  return `${prefix}${core}`;
+}
+
+module.exports = { generateSkuFrom };
