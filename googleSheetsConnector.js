@@ -1,3 +1,4 @@
+// googleSheetsConnector.js — Google Sheets RW
 const { google } = require('googleapis');
 
 class GoogleSheetsService {
@@ -6,16 +7,16 @@ class GoogleSheetsService {
     if (!credsRaw) throw new Error('GOOGLE_CREDENTIALS ausente');
 
     const creds = JSON.parse(credsRaw);
-    // normaliza private_key con \n
     if (creds.private_key) {
       creds.private_key = creds.private_key.replace(/\\n/g, '\n');
     }
 
+    // RW para poder crear filas
     this.jwt = new google.auth.JWT(
       creds.client_email,
       null,
       creds.private_key,
-      ['https://www.googleapis.com/auth/spreadsheets.readonly']
+      ['https://www.googleapis.com/auth/spreadsheets']
     );
     await this.jwt.authorize();
 
