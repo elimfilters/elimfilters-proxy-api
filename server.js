@@ -18,7 +18,7 @@ app.set('trust proxy', 1);
 // Seguridad headers
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 
-// CORS
+// CORS desde env (coma-separados)
 const allowed = (process.env.ALLOWED_ORIGINS || 'https://elimfilters.com,https://www.elimfilters.com')
   .split(',').map(s => s.trim()).filter(Boolean);
 app.use(cors({ origin: allowed, methods: ['GET','POST'] }));
@@ -54,11 +54,11 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Detect filter
+// Detect filter (OEM/XREF crean; SKU solo si existe)
 app.post('/api/detect-filter', security.verifyKey, async (req, res) => {
   try {
     const { query } = req.body || {};
-    if (!query || typeof query !== 'string' || query.trim() === '') {
+    if (!query || typeof query !== 'string' || !query.trim()) {
       return res.status(400).json({ error: 'Query vacía o inválida' });
     }
     const result = await processFilterCode(query, { sheetsInstance });
@@ -75,10 +75,8 @@ app.get('/api/rules', security.verifyKey, (req, res) => {
   res.status(200).json(meta);
 });
 
-// 404
+// 404 y errores
 app.use((req, res) => res.status(404).json({ error: 'Ruta no encontrada' }));
-
-// Error handler
 app.use((err, req, res, next) => {
   console.error('❌ Error no manejado:', err);
   res.status(500).json({ error: 'Error interno del servidor' });
