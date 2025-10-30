@@ -1,4 +1,4 @@
-// googleSheetsConnector.js — Google Sheets RW
+// googleSheetsConnector.js — conexión con Google Sheets (lectura y escritura)
 const { google } = require('googleapis');
 
 class GoogleSheetsService {
@@ -11,7 +11,7 @@ class GoogleSheetsService {
       creds.private_key = creds.private_key.replace(/\\n/g, '\n');
     }
 
-    // RW para poder crear filas
+    // Permiso total para lectura y escritura
     this.jwt = new google.auth.JWT(
       creds.client_email,
       null,
