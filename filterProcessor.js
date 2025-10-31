@@ -1,165 +1,97 @@
-// filterProcessor.js — v3.0.1
-// - OEM/XREF crean filas (requiere family/duty válidos en decisionTable).
-// - SKU solo si existe (y SOLO si cumple prefijo válido + 4 dígitos).
-// - Prefijos SIEMPRE desde decisionTable. Core numérico (4 dígitos) se calcula en homologationDB.
-// - Aquí NO se toca el SKU devuelto.
+// filterProcessor.js
+// v3.0.0 – usa detectionService + businessLogic; inserta y audita en Sheets solo para OEM/XREF
 
-const { normalizeQuery, isStrictElimSku } = require('./utils');
-const dataAccess = require('./dataAccess');
+const detectionService = require('./detectionService');
 const businessLogic = require('./businessLogic');
-const jsonBuilder = require('./jsonBuilder');
-const { generateSkuFrom, loadRules } = require('./homologationDB');
+const dataAccess = require('./dataAccess');
+const sheets = require('./googleSheetsConnectorInstance');
 
-function nowISO() { return new Date().toISOString(); }
-
-// Detecta tipo del código de entrada
-function detectCodeType(code) {
-  const c = String(code || '').toUpperCase();
-
-  // SKU ELIMFILTERS válido: PREFIJO_VALIDO + 4 dígitos
-  if (isStrictElimSku(c)) return 'SKU';
-
-  // Solo dígitos (>=5) → OEM
-  if (/^[0-9]{5,}$/.test(c)) return 'OEM';
-
-  // Resto → Cross Reference
-  return 'XREF';
+function normalize(q) {
+  return String(q || '').trim();
 }
 
-/**
- * Proceso principal:
- * 1) Busca en la hoja. Si existe, devuelve enriquecido.
- * 2) Si NO existe:
- *    - SKU → NO crea (NOT_FOUND).
- *    - OEM/XREF → requiere {family,duty} válidos en decisionTable; genera SKU y crea fila.
- */
-async function processFilterCode(rawQuery, opts = {}) {
-  const q = normalizeQuery(String(rawQuery || '').trim());
-  if (!q) return jsonBuilder.buildError('EMPTY_QUERY', 'La consulta está vacía');
+function isValidSKUFormat(s) {
+  // Prefijos oficiales + 4 dígitos estrictos
+  const re = /^(EL8|EF9|EA1|EC1|ES9|ED4|EH6|EW7|EA2|ET9|EK5|EK3)\d{4}$/i;
+  return re.test(s);
+}
 
-  const codeType = detectCodeType(q);
+async function processQuery(input) {
+  const query = normalize(input.query);
+  if (!query) return { ok: false, code: 'EMPTY_QUERY' };
 
-  // 1) Buscar en la hoja
-  const found = await dataAccess.findByCodeOrCrossRef(q, opts);
-  if (found && found.length > 0) {
-    const enriched = businessLogic.enrich(found, { query: q, codeType });
-    return jsonBuilder.buildSuccess({
-      query: q,
-      codeType,
-      items: enriched.items,
-      summary: enriched.summary,
-    });
-  }
+  // Detecta tipo (SKU/OEM/XREF) y familia/duty segun reglas existentes
+  const detected = await detectionService.detect({ query, family: input.family, duty: input.duty });
+  // detected: { codeType: 'SKU'|'OEM'|'XREF'|'INVALID', family, duty, normalized }
 
-  // 2) No existe en hoja
-  if (codeType === 'SKU') {
-    // SKU NO crea filas si no existe
-    return jsonBuilder.buildNotFound(q);
-  }
-
-  // OEM/XREF: exigir family/duty y validar en decisionTable
-  const reqBody = opts.reqBody || {};
-  const family = reqBody.family;
-  const duty   = reqBody.duty;
-
-  if (!family || !duty) {
-    return jsonBuilder.buildError(
-      'MISSING_FAMILY_DUTY',
-      'Para crear OEM/XREF debes enviar { family, duty } (ej. {"family":"AIRE","duty":"LD"}).'
-    );
-  }
-
-  const rules = loadRules();
-  const dt = rules.decisionTable || {};
-  const key = `${String(family).toUpperCase()}|${String(duty).toUpperCase()}`;
-  const prefix = dt[key];
-
-  if (!prefix) {
-    return jsonBuilder.buildError(
-      'DECISION_KEY_NOT_FOUND',
-      `No existe mapeo en decisionTable para "${key}".`
-    );
-  }
-
-  // Generar SKU exacto según tus reglas (sin tocarlo después)
-  let newSKU;
-  try {
-    newSKU = generateSkuFrom(q, { type: codeType, family, duty });
-    console.log('[SKU RULES] key=%s -> prefix=%s | query=%s | SKU=%s', key, prefix, q, newSKU);
-  } catch (e) {
-    console.error('[SKU RULES][ERROR] %s', e?.message || e);
-    return jsonBuilder.buildError('SKU_RULES_FAILED', 'Error generando el SKU con las reglas.');
-  }
-
-  // Preparar fila nueva respetando encabezados existentes
-  const { headers } = await dataAccess.getTable(opts);
-  const H = headers.map(h => String(h).trim().toUpperCase());
-
-  const row = headers.map((h, idx) => {
-    const HU = H[idx];
-
-    if (HU === 'SKU' || HU === 'CODIGO' || HU === 'CODE') return newSKU; // NO normalizar
-    if (HU === 'OEM' || HU === 'CODIGO OEM') return (codeType === 'OEM') ? q : '';
-    if (HU === 'CROSSREF' || HU === 'CROSS REF' || HU === 'EQUIVALENCIA' || HU === 'EQUIVALENTE') {
-      return (codeType === 'XREF') ? q : '';
+  if (detected.codeType === 'SKU') {
+    // SKU: nunca crea filas; validar formato
+    if (!isValidSKUFormat(detected.normalized)) {
+      return { ok: false, code: 'INVALID_SKU_FORMAT', query };
     }
-    if (HU === 'FAMILY' || HU === 'FAMILIA') return family || '';
-    if (HU === 'DUTY') return duty || '';
-    if (HU === 'STATUS' || HU === 'ESTADO') return 'NEW';
-    if (HU === 'CREATED_AT' || HU === 'FECHA') return nowISO();
-    if (HU === 'SOURCE' || HU === 'ORIGEN') return 'API';
+    const enrich = await businessLogic.lookupBySKU(detected.normalized);
+    if (!enrich) return { ok: false, code: 'NOT_FOUND', query };
+    return { ok: true, created: false, codeType: 'SKU', items: [enrich] };
+  }
 
-    // Dejar vacío para columnas no mapeadas
-    return '';
+  if (detected.codeType === 'INVALID') {
+    return { ok: false, code: 'NOT_FOUND', query };
+  }
+
+  // OEM o XREF → genera SKU por reglas, aplica familia/duty, crea fila si no existe
+  const generated = await businessLogic.generateFromCode({
+    codeType: detected.codeType,
+    code: detected.normalized,
+    family: detected.family,
+    duty: detected.duty
+  });
+  // generated: { SKU, FAMILY, DUTY, OEM?, CrossRef? }
+
+  if (!generated || !generated.SKU) {
+    return { ok: false, code: 'GENERATION_FAILED', query };
+  }
+
+  // Inserción idempotente al Master
+  const ins = await dataAccess.insertIfNew({
+    query_norm: query,
+    sku: generated.SKU,
+    family: generated.FAMILY || '',
+    duty: generated.DUTY || '',
+    oem_codes: generated.OEM || (detected.codeType === 'OEM' ? detected.normalized : ''),
+    cross_ref: generated.CrossRef || (detected.codeType === 'XREF' ? detected.normalized : ''),
+    filter_type: '',
+    media_type: '',
+    subtype: '',
+    engine_applications: '',
+    equipment_applications: '',
+    height_mm: '',
+    outer_diameter: '',
+    thread_size: '',
+    gasket: ''
   });
 
-  // Escribir y responder
-  try {
-    await dataAccess.appendRow(row, opts);
+  // Auditoría
+  await sheets.appendAudit({
+    event: ins.inserted ? 'CREATE' : 'SKIP_DUP',
+    query,
+    codeType: detected.codeType,
+    ...generated,
+    STATUS: ins.inserted ? 'NEW' : 'DUP',
+    SOURCE: 'API'
+  });
 
-    const item = {
-      SKU: newSKU,
-      OEM: codeType === 'OEM' ? q : '',
-      CrossRef: codeType === 'XREF' ? q : '',
-      FAMILY: family || '',
-      DUTY: duty || '',
-      STATUS: 'NEW',
-      CREATED_AT: nowISO(),
-      SOURCE: 'API',
-    };
-
-    return jsonBuilder.buildSuccess({
-      created: true,
-      query: q,
-      codeType,
-      items: [item],
-      summary: { count: 1, created: 1 },
-    });
-  } catch (e) {
-    console.error('[SHEETS][APPEND][ERROR] %s', e?.message || e);
-
-    const item = {
-      SKU: newSKU,
-      OEM: codeType === 'OEM' ? q : '',
-      CrossRef: codeType === 'XREF' ? q : '',
-      FAMILY: family || '',
-      DUTY: duty || '',
-      STATUS: 'PENDING_WRITE',
-      CREATED_AT: nowISO(),
-      SOURCE: 'API',
-    };
-
-    // No devolvemos 500; retornamos el SKU calculado y avisamos que no se pudo escribir.
-    return {
-      ok: true,
-      created: false,
-      warning: 'WRITE_FAILED',
-      query: q,
-      codeType,
-      items: [item],
-      summary: { count: 1, created: 0 },
-    };
-  }
+  return {
+    ok: true,
+    created: !!ins.inserted,
+    codeType: detected.codeType,
+    items: [{
+      ...generated,
+      STATUS: ins.inserted ? 'NEW' : 'EXISTS',
+      CREATED_AT: new Date().toISOString(),
+      SOURCE: 'API'
+    }],
+    summary: { count: 1, created: ins.inserted ? 1 : 0 }
+  };
 }
 
-module.exports = { processFilterCode, detectCodeType };
+module.exports = { processQuery };
