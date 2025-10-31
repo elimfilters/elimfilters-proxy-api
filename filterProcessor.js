@@ -1,8 +1,10 @@
-// filterProcessor.js — v3.0.0
-// Reglas: OEM/XREF crean filas; SKU solo si existe. Prefijos SIEMPRE desde decisionTable.
-// Core numérico (4 dígitos) se calcula en homologationDB. Aquí NO se toca el SKU.
+// filterProcessor.js — v3.0.1
+// - OEM/XREF crean filas (requiere family/duty válidos en decisionTable).
+// - SKU solo si existe (y SOLO si cumple prefijo válido + 4 dígitos).
+// - Prefijos SIEMPRE desde decisionTable. Core numérico (4 dígitos) se calcula en homologationDB.
+// - Aquí NO se toca el SKU devuelto.
 
-const { normalizeQuery, isValidCode } = require('./utils');
+const { normalizeQuery, isStrictElimSku } = require('./utils');
 const dataAccess = require('./dataAccess');
 const businessLogic = require('./businessLogic');
 const jsonBuilder = require('./jsonBuilder');
@@ -13,9 +15,15 @@ function nowISO() { return new Date().toISOString(); }
 // Detecta tipo del código de entrada
 function detectCodeType(code) {
   const c = String(code || '').toUpperCase();
-  if (/^[0-9]{5,}$/.test(c)) return 'OEM'; // solo dígitos (>=5) → OEM
-  if (isValidCode(c)) return 'SKU';        // interno ELIMFILTERS
-  return 'XREF';                           // mixto → Cross Reference
+
+  // SKU ELIMFILTERS válido: PREFIJO_VALIDO + 4 dígitos
+  if (isStrictElimSku(c)) return 'SKU';
+
+  // Solo dígitos (>=5) → OEM
+  if (/^[0-9]{5,}$/.test(c)) return 'OEM';
+
+  // Resto → Cross Reference
+  return 'XREF';
 }
 
 /**
@@ -31,7 +39,7 @@ async function processFilterCode(rawQuery, opts = {}) {
 
   const codeType = detectCodeType(q);
 
-  // 1) Buscar en hoja
+  // 1) Buscar en la hoja
   const found = await dataAccess.findByCodeOrCrossRef(q, opts);
   if (found && found.length > 0) {
     const enriched = businessLogic.enrich(found, { query: q, codeType });
@@ -52,7 +60,7 @@ async function processFilterCode(rawQuery, opts = {}) {
   // OEM/XREF: exigir family/duty y validar en decisionTable
   const reqBody = opts.reqBody || {};
   const family = reqBody.family;
-  const duty = reqBody.duty;
+  const duty   = reqBody.duty;
 
   if (!family || !duty) {
     return jsonBuilder.buildError(
