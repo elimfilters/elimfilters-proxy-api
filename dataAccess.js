@@ -1,62 +1,75 @@
-// dataAccess.js — obtiene y agrega filas en la hoja Google
-function _sheetNameFromRange(range) {
-  const m = String(range).match(/^'?([^'!]+)'?!/);
-  return m ? m[1] : 'Master';
+// dataAccess.js
+// v3.0.0 – inserción idempotente al Master
+
+const sheets = require('./googleSheetsConnectorInstance'); // ver server.js para seteo
+const MASTER_RANGE = process.env.SHEET_RANGE || 'Master!A:Z';
+
+function indexOf(colNames, name) {
+  const i = colNames.indexOf(name);
+  return i >= 0 ? i : null;
 }
 
-async function getTable(opts = {}) {
-  const { sheetsInstance } = opts;
-  if (!sheetsInstance || !sheetsInstance.sheets) {
-    throw new Error('SHEETS_NOT_INITIALIZED');
+async function getAllRows() {
+  const rows = await sheets.readRange(MASTER_RANGE);
+  return rows;
+}
+
+async function existsByKeys({ SKU, OEM, CrossRef }) {
+  const rows = await getAllRows();
+  if (!rows.length) return false;
+  const header = rows[0];
+  const iSKU = indexOf(header, 'sku');
+  const iOEM = indexOf(header, 'oem_codes');
+  const iX  = indexOf(header, 'cross_ref');
+
+  return rows.slice(1).some(r => {
+    const skuMatch = iSKU!=null && SKU && r[iSKU] === SKU;
+    const oemMatch = iOEM!=null && OEM && (String(r[iOEM]||'').split(',').map(x=>x.trim())).includes(OEM);
+    const xrfMatch = iX!=null && CrossRef && (String(r[iX]||'').split(',').map(x=>x.trim())).includes(CrossRef);
+    return skuMatch || oemMatch || xrfMatch;
+  });
+}
+
+async function insertIfNew(payload) {
+  if (await existsByKeys({
+    SKU: payload.sku,
+    OEM: payload.oem_codes,
+    CrossRef: payload.cross_ref
+  })) {
+    return { inserted: false, reason: 'DUPLICATE' };
   }
-  const range = process.env.SHEET_RANGE || 'Master!A:Z';
 
-  const resp = await sheetsInstance.sheets.spreadsheets.values.get({
-    spreadsheetId: sheetsInstance.sheetId,
-    range
-  });
+  // Asegura cabecera
+  const header = [
+    'query_norm','sku','family','duty','oem_codes','cross_ref',
+    'filter_type','media_type','subtype','engine_applications',
+    'equipment_applications','height_mm','outer_diameter','thread_size','gasket'
+  ];
+  await sheets.ensureHeaders(MASTER_RANGE, header);
 
-  const rows = resp.data.values || [];
-  const headers = rows[0] || [];
-  const list = rows.slice(1).map(r =>
-    Object.fromEntries(headers.map((h, i) => [h, r[i] ?? '']))
-  );
+  const row = [[
+    payload.query_norm || '',
+    payload.sku || '',
+    payload.family || '',
+    payload.duty || '',
+    payload.oem_codes || '',
+    payload.cross_ref || '',
+    payload.filter_type || '',
+    payload.media_type || '',
+    payload.subtype || '',
+    payload.engine_applications || '',
+    payload.equipment_applications || '',
+    payload.height_mm || '',
+    payload.outer_diameter || '',
+    payload.thread_size || '',
+    payload.gasket || ''
+  ]];
 
-  return { headers, list, range };
+  await sheets.appendRows(MASTER_RANGE, row);
+  return { inserted: true };
 }
 
-async function appendRow(values, opts = {}) {
-  const { sheetsInstance } = opts;
-  const baseRange = process.env.SHEET_RANGE || 'Master!A:Z';
-  const sheetName = _sheetNameFromRange(baseRange);
-
-  return await sheetsInstance.sheets.spreadsheets.values.append({
-    spreadsheetId: sheetsInstance.sheetId,
-    range: `${sheetName}!A:Z`,
-    valueInputOption: 'USER_ENTERED',
-    insertDataOption: 'INSERT_ROWS',
-    requestBody: { values: [values] }
-  });
-}
-
-async function findByCodeOrCrossRef(code, opts = {}) {
-  const { headers, list } = await getTable(opts);
-  const key = String(code || '').toUpperCase();
-
-  // detecta nombres de columna equivalentes
-  const matchCol = (regexList) =>
-    headers.find(h => regexList.some(rx => rx.test(h))) || null;
-
-  const hSKU = matchCol([/^sku$/i, /^codigo$/i, /^code$/i]);
-  const hOEM = matchCol([/^oem$/i, /^codigo\s*oem$/i]);
-  const hXRF = matchCol([/^cross\s*ref$/i, /^crossref$/i, /^equivalente$/i, /^equivalencia$/i]);
-
-  return list.filter(row => {
-    const vSKU = String(hSKU ? row[hSKU] : '').toUpperCase();
-    const vOEM = String(hOEM ? row[hOEM] : '').toUpperCase();
-    const vXRF = String(hXRF ? row[hXRF] : '').toUpperCase();
-    return vSKU === key || vOEM.includes(key) || vXRF.includes(key);
-  });
-}
-
-module.exports = { getTable, appendRow, findByCodeOrCrossRef };
+module.exports = {
+  existsByKeys,
+  insertIfNew
+};
