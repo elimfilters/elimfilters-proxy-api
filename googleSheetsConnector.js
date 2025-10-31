@@ -1,31 +1,43 @@
 // googleSheetsConnector.js
 const { google } = require('googleapis');
 
-class GoogleSheetsService {
-  constructor() {
-    this.sheets = null;
-    this.spreadsheetId = process.env.SHEETS_SPREADSHEET_ID;
-  }
-
-  async initialize() {
-    const auth = new google.auth.JWT(
-      process.env.GOOGLE_CLIENT_EMAIL,
-      null,
-      (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
-      ['https://www.googleapis.com/auth/spreadsheets.readonly']
-    );
-    await auth.authorize();
-    this.sheets = google.sheets({ version: 'v4', auth });
-  }
-
-  // ejemplo de método usado por detection/business
-  async getRange(range) {
-    const res = await this.sheets.spreadsheets.values.get({
-      spreadsheetId: this.spreadsheetId,
-      range,
-    });
-    return res.data.values || [];
-  }
+function getPrivateKey() {
+  // Railway/GitHub Actions suelen guardar saltos de línea como \n
+  return (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\\n/g, '\n');
 }
 
-module.exports = GoogleSheetsService;
+async function create() {
+  const auth = new google.auth.JWT(
+    process.env.GOOGLE_CLIENT_EMAIL,
+    null,
+    getPrivateKey(),
+    ['https://www.googleapis.com/auth/spreadsheets']
+  );
+
+  const sheets = google.sheets({ version: 'v4', auth });
+  const spreadsheetId = process.env.GOOGLE_SHEET_ID;
+  const defaultRange = process.env.SHEET_RANGE || 'Master!A:Z';
+
+  return {
+    async ping() {
+      // llamada ligera para validar credenciales
+      await sheets.spreadsheets.get({ spreadsheetId });
+      return 'ok';
+    },
+    async read(range = defaultRange) {
+      const res = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+      return res.data.values || [];
+    },
+    async append(range, values) {
+      await sheets.spreadsheets.values.append({
+        spreadsheetId,
+        range,
+        valueInputOption: 'RAW',
+        requestBody: { values }
+      });
+      return true;
+    }
+  };
+}
+
+module.exports = { create };
