@@ -1,23 +1,42 @@
+// utils.js — Validación estricta de SKU ELIMFILTERS (prefijo válido + 4 dígitos)
+const { loadRules } = require('./homologationDB');
+
+/** Normaliza consulta a A-Z0-9 en mayúsculas */
 function normalizeQuery(s) {
-  return String(s || '').replace(/[^A-Za-z0-9]/g,'').toUpperCase();
+  return String(s || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
 }
 
-/**
- * Valida SKU interno según reglas:
- *  - Prefijos permitidos por env ALLOWED_PREFIXES (coma-separados), ej: "EA,E,EF,PH"
- *  - Longitud mínima/máxima por env MIN_CODE_LEN / MAX_CODE_LEN
- */
-function isValidCode(code) {
+/** Lista de prefijos válidos desde las reglas (allPrefixes o decisionTable) */
+function getValidPrefixes() {
+  const rules = loadRules();
+  // 1) Preferir allPrefixes si existe
+  if (Array.isArray(rules.allPrefixes) && rules.allPrefixes.length) {
+    return rules.allPrefixes.map(p => String(p).toUpperCase());
+  }
+  // 2) Derivar de decisionTable si no hay allPrefixes
+  const dt = rules.decisionTable || {};
+  const set = new Set(Object.values(dt).map(v => String(v).toUpperCase()));
+  return Array.from(set);
+}
+
+/** SKU estricto: ^(?:<PREFIJO_VALIDO>)\d{4}$ */
+function isStrictElimSku(code) {
   const c = normalizeQuery(code);
-  const min = Number(process.env.MIN_CODE_LEN || 3);
-  const max = Number(process.env.MAX_CODE_LEN || 18);
-  if (c.length < min || c.length > max) return false;
-
-  const prefs = (process.env.ALLOWED_PREFIXES || 'EA,E,EF,PH')
-    .split(',').map(x => x.trim().toUpperCase()).filter(Boolean);
-  if (prefs.length === 0) return true;
-
-  return prefs.some(p => c.startsWith(p));
+  const prefixes = getValidPrefixes();
+  if (!prefixes.length) return false;
+  const alt = prefixes.map(p => p.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')).join('|');
+  const re = new RegExp(`^(?:${alt})\\d{4}$`, 'i');
+  return re.test(c);
 }
 
-module.exports = { normalizeQuery, isValidCode };
+/** Alias histórico: ahora SKU estricto */
+function isValidCode(code) {
+  return isStrictElimSku(code);
+}
+
+module.exports = {
+  normalizeQuery,
+  getValidPrefixes,
+  isStrictElimSku,
+  isValidCode,
+};
