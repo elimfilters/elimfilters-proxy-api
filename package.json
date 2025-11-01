@@ -11,6 +11,7 @@
     "cors": "^2.8.5",
     "googleapis": "^164.1.0",
     "dotenv": "^16.4.5",
-    "helmet": "^11.0.0"
+    "helmet": "^8.1.0",
+    "rate-limit-express": "^2.1.0"
   }
 }
