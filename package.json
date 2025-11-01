@@ -2,9 +2,9 @@
   "name": "nombre-de-tu-aplicacion",
   "version": "1.0.0",
   "description": "Una descripción de tu proyecto.",
-  "main": "server.js",  <-- ¡CAMBIADO!
+  "main": "server.js"
   "scripts": {
-    "start": "node server.js" <-- ¡CAMBIADO!
+    "start": "node server.js" 
   },
   "dependencies": {
     "express": "^4.18.3",
