@@ -1,19 +1,17 @@
 {
-  "name": "elimfilters-proxy-api",
+  "name": "nombre-de-tu-aplicacion",
   "version": "1.0.0",
-  "description": "Proxy API for ElimFilters - Google Sheets backed",
-  "main": "server.js",
+  "description": "Una descripción de tu proyecto.",
+  "main": "index.js",
   "scripts": {
-    "start": "node server.js"
-  },
-  "engines": {
-    "node": ">=18"
+    "start": "node index.js"
+    // ... otros scripts
   },
   "dependencies": {
-    "express": "^4.18.2",
-    "googleapis": "^141.0.0",
-    "dotenv": "^16.3.1",
+    "express": "^4.18.3",
     "cors": "^2.8.5",
-    "helmet": "^7.0.0"
+    // Esta es la línea que debes actualizar
+    "googleapis": "^164.1.0"
+    // ... otras dependencias
   }
 }
