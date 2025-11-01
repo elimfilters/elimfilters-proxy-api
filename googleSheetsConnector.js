@@ -1,6 +1,6 @@
 // googleSheetsConnector.js
 // Requiere: npm install googleapis
-// Export: module.exports = { GoogleSheetsService }
+// Export: module.exports = GoogleSheetsService; module.exports.GoogleSheetsService = GoogleSheetsService;
 
 class GoogleSheetsService {
   /**
@@ -150,5 +150,8 @@ class GoogleSheetsService {
   }
 }
 
-// Export como objeto (desestructurable): require('./googleSheetsConnector').GoogleSheetsService
-module.exports = { GoogleSheetsService };
+// Export compatible con ambos estilos de require:
+// - const GoogleSheetsService = require('./googleSheetsConnector');
+// - const { GoogleSheetsService } = require('./googleSheetsConnector');
+module.exports = GoogleSheetsService;
+module.exports.GoogleSheetsService = GoogleSheetsService;
