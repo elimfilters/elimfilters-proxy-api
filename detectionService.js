@@ -1,174 +1,82 @@
-// detectionService.js — ELIMFILTERS SKU v3.0
-// ==========================================
-let sheetsInstance = null;
-const NUMERIC_FALLBACK = "0001";
+// =========================
+// FAMILY DETECTION RULES v3.6.0
+// =========================
 
-// =======================
-// CONFIGURACIÓN INICIAL
-// =======================
-function setSheetsInstance(instance) {
-  sheetsInstance = instance;
-  console.log("✅ Google Sheets instance configurada correctamente");
-}
+function detectFilterFamily(query, context = '') {
+  const combined = (query + ' ' + context).toUpperCase();
 
-// =======================
-// PREFIJOS POR FAMILY / DUTY
-// =======================
-const PREFIX_RULES = {
-  HD: {
-    AIR: "EA1",
-    FUEL: "EF9",
-    OIL: "EL8",
-    HYDRAULIC: "EH6",
-    COOLANT: "EW7",
-    CABIN: "EC1",
-    "FUEL SEPARATOR": "ES9",
-    "AIR DRYER": "ED4",
-    CARCAZA: "EA2",
-    TURBINE: "ET9",
-    KITS: "EK5",
-  },
-  LD: {
-    AIR: "EA1",
-    FUEL: "EF9",
-    OIL: "EL8",
-    CABIN: "EC1",
-    KITS: "EK3",
-  },
-};
-
-// =======================
-// DETECCIÓN DE FAMILY
-// =======================
-function detectFamily(context) {
-  const text = (context || "").toUpperCase();
-  const map = {
-    AIR: ["AIR", "AIRE", "RADIAL", "AXIAL", "RS", "PRIMARY"],
-    FUEL: ["FUEL", "COMBUSTIBLE", "FF", "FS", "DIESEL"],
-    OIL: ["OIL", "ACEITE", "LF", "PH", "LUBRICANT"],
-    HYDRAULIC: ["HYDRAULIC", "HIDRAULICO", "HF", "HH"],
-    COOLANT: ["COOLANT", "REFRIGERANTE", "WF", "WATER"],
-    CABIN: ["CABIN", "CABINA", "CF", "HVAC", "AC"],
-    "FUEL SEPARATOR": ["SEPARATOR", "SEPARADOR", "COALESCER", "MODULE"],
-    "AIR DRYER": ["DRYER", "SECADOR", "DESHUMIDIFICADOR"],
-    CARCAZA: ["HOUSING", "BASE", "HEAD"],
-    TURBINE: ["TURBINE", "TURBO", "PREFILTER", "PRE-FILTER"],
-    KITS: ["KIT", "REPLACEMENT", "SET"],
+  const patterns = {
+    'AIR': [
+      'AIR FILTER', 'AIRE', 'RADIAL SEAL', 'INNER ELEMENT',
+      'OUTER ELEMENT', 'PRIMARY AIR', 'SECONDARY AIR'
+    ],
+    'OIL': [
+      'OIL FILTER', 'LUBE FILTER', 'ACEITE', 'LUBRICANTE', 'MOTOR OIL'
+    ],
+    'FUEL': [
+      'FUEL FILTER', 'FILTRO DE COMBUSTIBLE', 'DIESEL FILTER', 'GASOLINE FILTER'
+    ],
+    'SEPARATOR': [
+      'FUEL WATER SEPARATOR', 'SEPARATOR', 'SEPARADOR', 'COALESCER'
+    ],
+    'HYDRAULIC': [
+      'HYDRAULIC FILTER', 'HIDRAULICO', 'RETURN LINE', 'SUCTION FILTER'
+    ],
+    'COOLANT': [
+      'COOLANT FILTER', 'REFRIGERANTE', 'WATER FILTER'
+    ],
+    'CABIN': [
+      'CABIN FILTER', 'CABINA', 'A/C FILTER', 'INTERIOR FILTER'
+    ],
+    'AIR DRYER': [
+      'AIR DRYER', 'SECANTE', 'DESHUMIDIFICADOR', 'BRAKE DRYER'
+    ],
+    'TURBINE': [
+      'PARKER TURBINE SERIES', 'TURBINA PARKER', 'TURBINE SEPARATOR',
+      'TURBINE SERIES', 'TURBINA SEPARADOR'
+    ],
+    'HOUSING': [
+      'CARCASA', 'HOUSING', 'FILTER HOUSING', 'BODY FILTER'
+    ],
+    'KIT DIESEL': [
+      'KIT DIESEL', 'DIESEL ENGINE KIT'
+    ],
+    'KIT GASOLINE': [
+      'KIT GASOLINA', 'GASOLINE ENGINE KIT'
+    ]
   };
 
-  let bestMatch = "UNKNOWN";
-  let maxHits = 0;
-  for (const [family, words] of Object.entries(map)) {
-    const hits = words.filter((w) => text.includes(w)).length;
-    if (hits > maxHits) {
-      maxHits = hits;
-      bestMatch = family;
+  const mapping = {
+    'AIR': { prefix: 'EA1', duty: 'HD/LD' },
+    'OIL': { prefix: 'EL8', duty: 'HD/LD' },
+    'FUEL': { prefix: 'EF9', duty: 'HD/LD' },
+    'SEPARATOR': { prefix: 'ES9', duty: 'HD' },
+    'HYDRAULIC': { prefix: 'EH6', duty: 'HD' },
+    'COOLANT': { prefix: 'EW7', duty: 'HD' },
+    'CABIN': { prefix: 'EC1', duty: 'HD/LD' },
+    'AIR DRYER': { prefix: 'ED4', duty: 'HD' },
+    'TURBINE': { prefix: 'ET9', duty: 'HD' },
+    'HOUSING': { prefix: 'EA2', duty: 'HD' },
+    'KIT DIESEL': { prefix: 'EK5', duty: 'HD' },
+    'KIT GASOLINE': { prefix: 'EK3', duty: 'LD' }
+  };
+
+  let detected = 'UNKNOWN';
+  let score = 0;
+
+  for (const [family, keys] of Object.entries(patterns)) {
+    for (const keyword of keys) {
+      if (combined.includes(keyword)) {
+        detected = family;
+        score++;
+      }
     }
   }
-  return bestMatch;
+
+  return {
+    family: detected,
+    confidence: score > 0 ? 1.0 : 0,
+    prefix: mapping[detected]?.prefix || null,
+    duty_hint: mapping[detected]?.duty || null
+  };
 }
-
-// =======================
-// DETECCIÓN DE DUTY
-// =======================
-function detectDuty(context) {
-  const text = (context || "").toUpperCase();
-
-  const HD_MANUFACTURERS = [
-    "CATERPILLAR", "CAT", "KOMATSU", "MACK", "VOLVO", "CUMMINS",
-    "DETROIT", "JOHN DEERE", "CASE", "PACCAR", "FREIGHTLINER",
-    "INTERNATIONAL", "SCANIA", "DONALDSON", "ISUZU", "MAN", "DAF",
-    "NEW HOLLAND", "IVECO"
-  ];
-
-  const LD_MANUFACTURERS = [
-    "TOYOTA", "FORD", "HONDA", "NISSAN", "HYUNDAI", "KIA",
-    "CHEVROLET", "MAZDA", "BMW", "LEXUS", "MERCEDES BENZ",
-    "SUBARU", "MITSUBISHI", "VOLKSWAGEN", "AUDI", "JEEP",
-    "DODGE", "RAM", "GMC", "FRAM"
-  ];
-
-  let hd = HD_MANUFACTURERS.some((m) => text.includes(m));
-  let ld = LD_MANUFACTURERS.some((m) => text.includes(m));
-
-  if (hd && !ld) return "HD";
-  if (ld && !hd) return "LD";
-  if (text.includes("DIESEL")) return "HD";
-  if (text.includes("GASOLINE")) return "LD";
-  return "UNKNOWN";
-}
-
-// =======================
-// EXTRACCIÓN DE 4 DÍGITOS
-// =======================
-function extractLast4Digits(value) {
-  if (!value) return NUMERIC_FALLBACK;
-  const digits = value.match(/\d+/g);
-  if (!digits) return NUMERIC_FALLBACK;
-  const all = digits.join("");
-  const last4 = all.slice(-4);
-  return last4.padStart(4, "0");
-}
-
-// =======================
-// GENERACIÓN DE SKU FINAL
-// =======================
-async function detectFilter(query) {
-  try {
-    if (!sheetsInstance) throw new Error("Sheets no inicializado");
-    const q = query.trim().toUpperCase();
-
-    console.log(`🔍 Buscando ${q} en Google Sheets...`);
-    const result = await sheetsInstance.searchInMaster(q);
-
-    let family = "UNKNOWN";
-    let duty = "UNKNOWN";
-    let base = q;
-    let oemCodes = "";
-    let crossRefs = "";
-
-    if (result.found) {
-      const data = result.data;
-      family = data.family || detectFamily(data.description);
-      duty =
-        data.duty ||
-        detectDuty(
-          (data.oem_codes || "") + " " + (data.cross_reference || "")
-        );
-      oemCodes = data.oem_codes || "";
-      crossRefs = data.cross_reference || "";
-    } else {
-      family = detectFamily(q);
-      duty = detectDuty(q);
-    }
-
-    if (duty === "UNKNOWN") duty = "HD";
-    const prefixSet = PREFIX_RULES[duty] || PREFIX_RULES.HD;
-    const prefix = prefixSet[family] || "EA1";
-
-    // Determinar fuente según Duty
-    let source = duty === "HD" ? "Donaldson" : "Fram";
-    let sourceCode = duty === "HD" ? crossRefs : oemCodes;
-
-    const last4 = extractLast4Digits(sourceCode || q);
-    const finalSku = `${prefix}${last4}`.replace(/\D+$/, "");
-
-    return {
-      status: "OK",
-      query: q,
-      family,
-      duty,
-      source,
-      homologated_sku: finalSku,
-    };
-  } catch (error) {
-    console.error("❌ Error detectando filtro:", error);
-    return { status: "ERROR", message: error.message };
-  }
-}
-
-// =======================
-module.exports = {
-  detectFilter,
-  setSheetsInstance,
-};
