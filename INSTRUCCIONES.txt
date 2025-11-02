@@ -1,0 +1,117 @@
+╔══════════════════════════════════════════════════════════════╗
+║  INSTRUCCIONES - DEPLOYMENT PROXY v3.0.0                     ║
+╚══════════════════════════════════════════════════════════════╝
+
+⚠️  IMPORTANTE: DEBES ELIMINAR ARCHIVOS VIEJOS PRIMERO
+
+═══════════════════════════════════════════════════════════════
+
+OPCIÓN 1: DEPLOYMENT VÍA GITHUB (RECOMENDADO)
+─────────────────────────────────────────────
+
+PASO 1: Clonar o abrir tu repositorio de GitHub
+   cd ruta/a/elimfilters-proxy-api
+
+PASO 2: ELIMINAR TODOS LOS ARCHIVOS VIEJOS
+   # En Windows:
+   del /Q *.*
+   rmdir /S /Q config
+
+   # En Mac/Linux:
+   rm -rf *
+   rm -rf .*
+
+PASO 3: Copiar TODOS los archivos de este ZIP
+   - Copiar TODO el contenido de este ZIP
+   - Pegar en el directorio del repositorio
+
+PASO 4: Verificar que server.js tenga v3.0.0
+   # Abrir server.js
+   # Buscar línea 62: version: '3.0.0',
+
+PASO 5: Commit y Push
+   git add .
+   git commit -m "Deploy v3.0.0 - Limpio"
+   git push origin main
+
+PASO 6: Esperar 2-3 minutos que Railway detecte cambios
+
+PASO 7: VERIFICAR
+   curl https://elimfilters-proxy-api-production.up.railway.app/health
+   
+   Debe mostrar: "version": "3.0.0"
+
+═══════════════════════════════════════════════════════════════
+
+OPCIÓN 2: DEPLOYMENT DIRECTO EN RAILWAY
+────────────────────────────────────────
+
+PASO 1: Ir a Railway Dashboard
+   https://railway.app/
+
+PASO 2: Seleccionar tu proyecto
+   elimfilters-proxy-api
+
+PASO 3: Settings → Delete Service
+   (Eliminar servicio completamente)
+
+PASO 4: Create New Service → From GitHub
+   Seleccionar: elimfilters/elimfilters-proxy-api
+
+PASO 5: Subir archivos de este ZIP al repo de GitHub primero
+   (Ver Opción 1)
+
+═══════════════════════════════════════════════════════════════
+
+⚠️  EL PROBLEMA QUE TENÍAS
+─────────────────────────
+
+❌ Railway está usando v2.4.0 porque los archivos viejos 
+   están mezclados con los nuevos en GitHub.
+
+✅ Solución: ELIMINAR archivos viejos antes de copiar nuevos
+
+═══════════════════════════════════════════════════════════════
+
+📋 CHECKLIST
+────────────
+
+[ ] Archivos viejos eliminados del repo
+[ ] Archivos nuevos copiados del ZIP
+[ ] Verificado server.js → version: '3.0.0'
+[ ] git push ejecutado
+[ ] Railway detectó cambios (ver Activity en dashboard)
+[ ] curl /health muestra "version": "3.0.0"
+[ ] Probar: curl -X POST /api/detect-filter -d '{"code":"P552100"}'
+
+═══════════════════════════════════════════════════════════════
+
+✅ VARIABLES DE ENTORNO EN RAILWAY
+──────────────────────────────────
+
+MANTENER:
+   GOOGLE_SHEETS_ID=1ZYI5c0enkuvWAveu8HMaCUk1cek_VDrX8GtgKW7VP6U
+   GOOGLE_CREDENTIALS=<tu_json>
+   PORT=3000
+
+ELIMINAR:
+   N8N_WEBHOOK_URL  ← Ya no se usa
+
+═══════════════════════════════════════════════════════════════
+
+🆘 AYUDA
+────────
+
+Si después de hacer estos pasos Railway sigue mostrando v2.4.0:
+
+1. Ve a Railway Dashboard
+2. Deployments → Ver último deployment
+3. Logs → Verificar que no hay errores
+4. Redeploy manual si es necesario
+
+═══════════════════════════════════════════════════════════════
+
+Versión de este paquete: 3.0.0
+Fecha: 2025-10-29
+Reglas: v2.2.3 (16 combinaciones correctas)
+Sin n8n: ✅
