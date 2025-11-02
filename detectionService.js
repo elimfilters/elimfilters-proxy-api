@@ -1,167 +1,174 @@
-const fs = require('fs');
-const path = require('path');
-
+// detectionService.js — ELIMFILTERS SKU v3.0
+// ==========================================
 let sheetsInstance = null;
-let familyRules = [];
+const NUMERIC_FALLBACK = "0001";
 
-// =========================
+// =======================
 // CONFIGURACIÓN INICIAL
-// =========================
+// =======================
 function setSheetsInstance(instance) {
   sheetsInstance = instance;
-  console.log('✅ Google Sheets instance configured in detectionService');
-
-  // Cargar FAMILY_RULES desde JSON local
-  try {
-    const rulesPath = path.join(__dirname, 'familyRules.json');
-    const raw = fs.readFileSync(rulesPath, 'utf8');
-    familyRules = JSON.parse(raw);
-    console.log(`✅ Loaded ${familyRules.length} FAMILY_RULES from JSON`);
-  } catch (err) {
-    console.error('⚠️ Could not load FAMILY_RULES:', err.message);
-    familyRules = [];
-  }
+  console.log("✅ Google Sheets instance configurada correctamente");
 }
 
-// =========================
-// CATÁLOGOS Y PATRONES
-// =========================
-const HD_MANUFACTURERS = [
-  'CATERPILLAR', 'CAT', 'KOMATSU', 'VOLVO', 'MACK', 'ISUZU', 'IVECO',
-  'CUMMINS', 'DETROIT', 'PACCAR', 'NAVISTAR', 'FREIGHTLINER', 'INTERNATIONAL',
-  'JOHN DEERE', 'CASE', 'NEW HOLLAND', 'HITACHI', 'DOOSAN', 'HYUNDAI HEAVY',
-  'LIEBHERR', 'TEREX', 'SCANIA', 'MAN', 'DAF', 'MERCEDES ACTROS', 'DONALDSON'
-];
+// =======================
+// PREFIJOS POR FAMILY / DUTY
+// =======================
+const PREFIX_RULES = {
+  HD: {
+    AIR: "EA1",
+    FUEL: "EF9",
+    OIL: "EL8",
+    HYDRAULIC: "EH6",
+    COOLANT: "EW7",
+    CABIN: "EC1",
+    "FUEL SEPARATOR": "ES9",
+    "AIR DRYER": "ED4",
+    CARCAZA: "EA2",
+    TURBINE: "ET9",
+    KITS: "EK5",
+  },
+  LD: {
+    AIR: "EA1",
+    FUEL: "EF9",
+    OIL: "EL8",
+    CABIN: "EC1",
+    KITS: "EK3",
+  },
+};
 
-const LD_MANUFACTURERS = [
-  'TOYOTA', 'FORD', 'MERCEDES BENZ', 'BMW', 'HONDA', 'NISSAN',
-  'CHEVROLET', 'MAZDA', 'HYUNDAI', 'KIA', 'VOLKSWAGEN', 'AUDI',
-  'SUBARU', 'MITSUBISHI', 'JEEP', 'DODGE', 'RAM', 'GMC',
-  'LEXUS', 'INFINITI', 'ACURA', 'BUICK', 'CADILLAC', 'FRAM', 'WIX'
-];
-
-const HD_KEYWORDS = [
-  'DIESEL', 'HEAVY DUTY', 'TRUCK', 'CAMION', 'MAQUINARIA PESADA',
-  'EXCAVATOR', 'EXCAVADORA', 'BULLDOZER', 'LOADER', 'CARGADOR',
-  'GRADER', 'MOTONIVELADORA', 'TRACTOR', 'AGRICULTURAL', 'AGRICOLA',
-  'STATIONARY ENGINE', 'MOTOR ESTACIONARIO', 'GENERATOR', 'GENERADOR',
-  'COMPRESSOR', 'COMPRESOR', 'MINING', 'MINERIA', 'CONSTRUCTION',
-  'CONSTRUCCION', 'FORESTRY', 'FORESTAL', 'MARINE', 'MARINO',
-  'OFF-HIGHWAY', 'OFF HIGHWAY', 'INDUSTRIAL'
-];
-
-const LD_KEYWORDS = [
-  'GASOLINE', 'GASOLINA', 'PETROL', 'AUTOMOBILE', 'AUTOMOVIL',
-  'CAR', 'CARRO', 'SUV', 'SEDAN', 'PICKUP LIGERA', 'LIGHT PICKUP',
-  'VAN', 'MINIVAN', 'CROSSOVER', 'HATCHBACK', 'COUPE', 'PASSENGER',
-  'LIGHT DUTY', 'ON-HIGHWAY', 'ON HIGHWAY'
-];
-
-// =========================
-// FUNCIONES PRINCIPALES
-// =========================
-async function searchInGoogleSheets(query) {
-  try {
-    if (!sheetsInstance) throw new Error('Google Sheets not initialized');
-    const queryNorm = query.toUpperCase().trim();
-
-    const result = await sheetsInstance.searchInMaster(queryNorm);
-    if (result && result.found) {
-      console.log(`✅ Found in Google Sheets: ${result.data.sku}`);
-      return { found: true, data: result.data };
-    }
-    return { found: false };
-  } catch (error) {
-    console.error('❌ Error searching in Google Sheets:', error);
-    return { found: false, error: error.message };
-  }
-}
-
-function classifyDutyLevel(context) {
-  const text = context.toUpperCase();
-  let hdScore = 0, ldScore = 0;
-
-  for (const mfg of HD_MANUFACTURERS) if (text.includes(mfg)) hdScore += 3;
-  for (const mfg of LD_MANUFACTURERS) if (text.includes(mfg)) ldScore += 3;
-  for (const k of HD_KEYWORDS) if (text.includes(k)) hdScore += 2;
-  for (const k of LD_KEYWORDS) if (text.includes(k)) ldScore += 2;
-
-  if (hdScore === ldScore) return { duty: 'UNKNOWN', confidence: 0 };
-  const duty = hdScore > ldScore ? 'HD' : 'LD';
-  const confidence = Math.max(hdScore, ldScore) / (hdScore + ldScore);
-  return { duty, confidence };
-}
-
-function detectFilterFamily(query, context = '') {
-  const combined = (query + ' ' + context).toUpperCase();
-  const patterns = {
-    'OIL': ['OIL', 'ACEITE', 'LUBRICANT', 'LUBRICATION', 'LF', 'P55'],
-    'FUEL': ['FUEL', 'COMBUSTIBLE', 'DIESEL', 'GASOLINE', 'FS', 'FF'],
-    'AIR': ['AIR', 'AIRE', 'AF', 'PA', 'INTAKE', 'ADMISION'],
-    'HYDRAULIC': ['HYDRAULIC', 'HIDRAULICO', 'HF', 'HH'],
-    'COOLANT': ['COOLANT', 'REFRIGERANTE', 'WF', 'WATER'],
-    'CABIN': ['CABIN', 'CABINA', 'CF', 'HVAC', 'AC'],
-    'SEPARATOR': ['SEPARATOR', 'SEPARADOR', 'COALESCER', 'COALESCENTE']
+// =======================
+// DETECCIÓN DE FAMILY
+// =======================
+function detectFamily(context) {
+  const text = (context || "").toUpperCase();
+  const map = {
+    AIR: ["AIR", "AIRE", "RADIAL", "AXIAL", "RS", "PRIMARY"],
+    FUEL: ["FUEL", "COMBUSTIBLE", "FF", "FS", "DIESEL"],
+    OIL: ["OIL", "ACEITE", "LF", "PH", "LUBRICANT"],
+    HYDRAULIC: ["HYDRAULIC", "HIDRAULICO", "HF", "HH"],
+    COOLANT: ["COOLANT", "REFRIGERANTE", "WF", "WATER"],
+    CABIN: ["CABIN", "CABINA", "CF", "HVAC", "AC"],
+    "FUEL SEPARATOR": ["SEPARATOR", "SEPARADOR", "COALESCER", "MODULE"],
+    "AIR DRYER": ["DRYER", "SECADOR", "DESHUMIDIFICADOR"],
+    CARCAZA: ["HOUSING", "BASE", "HEAD"],
+    TURBINE: ["TURBINE", "TURBO", "PREFILTER", "PRE-FILTER"],
+    KITS: ["KIT", "REPLACEMENT", "SET"],
   };
 
-  let detected = 'UNKNOWN', max = 0;
-  for (const family in patterns) {
-    const matches = patterns[family].filter(k => combined.includes(k)).length;
-    if (matches > max) { max = matches; detected = family; }
+  let bestMatch = "UNKNOWN";
+  let maxHits = 0;
+  for (const [family, words] of Object.entries(map)) {
+    const hits = words.filter((w) => text.includes(w)).length;
+    if (hits > maxHits) {
+      maxHits = hits;
+      bestMatch = family;
+    }
   }
-  return { family: detected, confidence: Math.min(max / 3, 1) };
+  return bestMatch;
 }
 
-// =========================
-// DETECCIÓN PRINCIPAL
-// =========================
+// =======================
+// DETECCIÓN DE DUTY
+// =======================
+function detectDuty(context) {
+  const text = (context || "").toUpperCase();
+
+  const HD_MANUFACTURERS = [
+    "CATERPILLAR", "CAT", "KOMATSU", "MACK", "VOLVO", "CUMMINS",
+    "DETROIT", "JOHN DEERE", "CASE", "PACCAR", "FREIGHTLINER",
+    "INTERNATIONAL", "SCANIA", "DONALDSON", "ISUZU", "MAN", "DAF",
+    "NEW HOLLAND", "IVECO"
+  ];
+
+  const LD_MANUFACTURERS = [
+    "TOYOTA", "FORD", "HONDA", "NISSAN", "HYUNDAI", "KIA",
+    "CHEVROLET", "MAZDA", "BMW", "LEXUS", "MERCEDES BENZ",
+    "SUBARU", "MITSUBISHI", "VOLKSWAGEN", "AUDI", "JEEP",
+    "DODGE", "RAM", "GMC", "FRAM"
+  ];
+
+  let hd = HD_MANUFACTURERS.some((m) => text.includes(m));
+  let ld = LD_MANUFACTURERS.some((m) => text.includes(m));
+
+  if (hd && !ld) return "HD";
+  if (ld && !hd) return "LD";
+  if (text.includes("DIESEL")) return "HD";
+  if (text.includes("GASOLINE")) return "LD";
+  return "UNKNOWN";
+}
+
+// =======================
+// EXTRACCIÓN DE 4 DÍGITOS
+// =======================
+function extractLast4Digits(value) {
+  if (!value) return NUMERIC_FALLBACK;
+  const digits = value.match(/\d+/g);
+  if (!digits) return NUMERIC_FALLBACK;
+  const all = digits.join("");
+  const last4 = all.slice(-4);
+  return last4.padStart(4, "0");
+}
+
+// =======================
+// GENERACIÓN DE SKU FINAL
+// =======================
 async function detectFilter(query) {
   try {
-    console.log('🔍 Detecting filter for:', query);
+    if (!sheetsInstance) throw new Error("Sheets no inicializado");
+    const q = query.trim().toUpperCase();
 
-    const sheetsResult = await searchInGoogleSheets(query);
-    let family = 'UNKNOWN', duty = 'UNKNOWN', baseSku = query;
+    console.log(`🔍 Buscando ${q} en Google Sheets...`);
+    const result = await sheetsInstance.searchInMaster(q);
 
-    if (sheetsResult.found) {
-      const d = sheetsResult.data;
-      family = d.family || detectFilterFamily(query).family;
-      duty = d.duty || classifyDutyLevel(d.oem_codes + ' ' + d.cross_reference).duty;
-      baseSku = d.sku || query;
+    let family = "UNKNOWN";
+    let duty = "UNKNOWN";
+    let base = q;
+    let oemCodes = "";
+    let crossRefs = "";
+
+    if (result.found) {
+      const data = result.data;
+      family = data.family || detectFamily(data.description);
+      duty =
+        data.duty ||
+        detectDuty(
+          (data.oem_codes || "") + " " + (data.cross_reference || "")
+        );
+      oemCodes = data.oem_codes || "";
+      crossRefs = data.cross_reference || "";
     } else {
-      const fam = detectFilterFamily(query);
-      const dut = classifyDutyLevel(query);
-      family = fam.family;
-      duty = dut.duty;
+      family = detectFamily(q);
+      duty = detectDuty(q);
     }
 
-    // Aplicar reglas JSON
-    let prefix = 'ELX';
-    const rule = familyRules.find(r =>
-      r.family.toUpperCase() === family.toUpperCase() &&
-      r.duty.toUpperCase() === duty.toUpperCase()
-    );
-    if (rule) prefix = rule.prefix;
+    if (duty === "UNKNOWN") duty = "HD";
+    const prefixSet = PREFIX_RULES[duty] || PREFIX_RULES.HD;
+    const prefix = prefixSet[family] || "EA1";
 
-    const homologatedSku = `${prefix}-${baseSku}`.replace(/\s+/g, '');
+    // Determinar fuente según Duty
+    let source = duty === "HD" ? "Donaldson" : "Fram";
+    let sourceCode = duty === "HD" ? crossRefs : oemCodes;
+
+    const last4 = extractLast4Digits(sourceCode || q);
+    const finalSku = `${prefix}${last4}`.replace(/\D+$/, "");
 
     return {
-      status: 'OK',
-      query,
-      homologated_sku: homologatedSku,
+      status: "OK",
+      query: q,
       family,
       duty,
-      source: sheetsResult.found ? 'database' : 'pattern_detection'
+      source,
+      homologated_sku: finalSku,
     };
   } catch (error) {
-    console.error('❌ Error in detectFilter:', error);
-    return { status: 'ERROR', message: error.message };
+    console.error("❌ Error detectando filtro:", error);
+    return { status: "ERROR", message: error.message };
   }
 }
 
+// =======================
 module.exports = {
   detectFilter,
-  searchInGoogleSheets,
-  classifyDutyLevel,
-  detectFilterFamily,
-  setSheetsInstance
+  setSheetsInstance,
 };
