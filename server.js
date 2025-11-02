@@ -1,5 +1,5 @@
 // =========================================
-// ELIMFILTERS Proxy API v3.1.4
+// ELIMFILTERS Proxy API v3.1.5 (Final Stable)
 // server.js
 // =========================================
 
@@ -8,11 +8,12 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const fetch = require('node-fetch');
 const GoogleSheetsService = require('./googleSheetsConnector');
 const detectionService = require('./detectionService');
 
 const app = express();
-app.set('trust proxy', 1); // ✅ Necesario para Railway/Cloudflare
+app.set('trust proxy', 1); // ✅ Requerido por Railway/Cloudflare
 
 const PORT = process.env.PORT || 3000;
 
@@ -23,7 +24,7 @@ app.use(helmet());
 app.use(cors());
 app.use(express.json());
 
-// Limitador de solicitudes (protección básica)
+// Limitador de peticiones básicas
 app.use(rateLimit({
   windowMs: 60 * 1000,
   max: 100,
@@ -55,7 +56,7 @@ app.get('/health', (req, res) => {
     status: 'ok',
     timestamp: new Date().toISOString(),
     service: 'ELIMFILTERS Proxy API',
-    version: '3.1.4',
+    version: '3.1.5',
     endpoints: {
       health: 'GET /health',
       detect: 'POST /api/detect-filter'
@@ -80,8 +81,8 @@ app.post('/api/detect-filter', async (req, res) => {
     const q = query.trim().toUpperCase();
     console.log(`🔍 Detectando filtro: ${q}`);
 
-    // Paso 1: Buscar en Google Sheets
-    if (!sheetsInstance.getProducts || typeof sheetsInstance.getProducts !== 'function') {
+    // Paso 1: Buscar en Google Sheets (Master)
+    if (typeof sheetsInstance.getProducts !== 'function') {
       throw new Error('GoogleSheetsService no tiene el método getProducts');
     }
 
@@ -123,8 +124,20 @@ app.post('/api/detect-filter', async (req, res) => {
 });
 
 // =======================
+// KEEP-ALIVE (Railway idle prevention)
+// =======================
+setInterval(async () => {
+  try {
+    const res = await fetch(`https://${process.env.RAILWAY_STATIC_URL || 'elimfilters-proxy-api-production.up.railway.app'}/health`);
+    console.log('🩺 Keep-alive ping →', res.status);
+  } catch {
+    console.log('⚠️ Keep-alive ping falló (sin impacto en servicio)');
+  }
+}, 14 * 60 * 1000); // cada 14 minutos
+
+// =======================
 // SERVIDOR ACTIVO
 // =======================
 app.listen(PORT, () => {
-  console.log(`🚀 ELIMFILTERS Proxy API v3.1.4 corriendo en puerto ${PORT}`);
+  console.log(`🚀 ELIMFILTERS Proxy API v3.1.5 corriendo en puerto ${PORT}`);
 });
