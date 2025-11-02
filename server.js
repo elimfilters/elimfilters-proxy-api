@@ -1,5 +1,5 @@
 // =========================================
-// ELIMFILTERS Proxy API v3.1.0
+// ELIMFILTERS Proxy API v3.1.1
 // server.js
 // =========================================
 
@@ -52,7 +52,7 @@ app.get('/health', (req, res) => {
     status: 'ok',
     timestamp: new Date().toISOString(),
     service: 'ELIMFILTERS Proxy API',
-    version: '3.1.0',
+    version: '3.1.1',
     endpoints: {
       health: 'GET /health',
       detect: 'POST /api/detect-filter'
@@ -78,18 +78,24 @@ app.post('/api/detect-filter', async (req, res) => {
     console.log(`🔍 Detectando filtro: ${q}`);
 
     // Paso 1: Buscar en Google Sheets
-    const result = await sheetsInstance.searchInMaster(q);
+    const allProducts = await sheetsInstance.getProducts();
+    const found = allProducts.find(p =>
+      (p.query_norm && p.query_norm.toUpperCase() === q) ||
+      (p.sku && p.sku.toUpperCase() === q) ||
+      (p.oem_codes && p.oem_codes.toUpperCase().includes(q)) ||
+      (p.cross_reference && p.cross_reference.toUpperCase().includes(q))
+    );
 
-    if (result && result.found) {
-      console.log(`✅ Encontrado en Master Sheet: ${result.data.sku || q}`);
+    if (found) {
+      console.log(`✅ Encontrado en hoja Master: ${found.sku || q}`);
       return res.json({
         status: 'OK',
         source: 'database',
-        data: result.data
+        data: found
       });
     }
 
-    // Paso 2: Si no está en la base, detectar por patrón
+    // Paso 2: Si no está en la hoja, ejecutar detección por patrón
     console.log('⚙️ No encontrado en base, ejecutando detección lógica...');
     const detectResult = await detectionService.detectFilter(q);
 
@@ -113,5 +119,5 @@ app.post('/api/detect-filter', async (req, res) => {
 // SERVIDOR ACTIVO
 // =======================
 app.listen(PORT, () => {
-  console.log(`🚀 ELIMFILTERS Proxy API v3.1.0 corriendo en puerto ${PORT}`);
+  console.log(`🚀 ELIMFILTERS Proxy API v3.1.1 corriendo en puerto ${PORT}`);
 });
