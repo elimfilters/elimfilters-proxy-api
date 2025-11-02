@@ -1,58 +1,52 @@
+// =========================================
+// ELIMFILTERS Proxy API v3.1.0
+// server.js
+// =========================================
+
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-const fs = require('fs');
-const path = require('path');
 const GoogleSheetsService = require('./googleSheetsConnector');
+const detectionService = require('./detectionService');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// =======================
+// CONFIGURACIÓN GLOBAL
+// =======================
 app.use(helmet());
 app.use(cors());
 app.use(express.json());
 
-// Rate limiter básico
 app.use(rateLimit({
   windowMs: 60 * 1000,
   max: 100,
   message: { status: 'ERROR', message: 'Too many requests' }
 }));
 
-let sheetsInstance;
-let familyRules = [];
+let sheetsInstance = null;
 
-// 📦 Cargar reglas JSON
-function loadFamilyRules() {
-  try {
-    const filePath = path.join(__dirname, 'familyRules.json');
-    const raw = fs.readFileSync(filePath, 'utf8');
-    familyRules = JSON.parse(raw);
-    console.log(`✅ Loaded ${familyRules.length} FAMILY_RULES from JSON`);
-  } catch (err) {
-    console.error('❌ Error loading FAMILY_RULES:', err.message);
-    familyRules = [];
-  }
-}
-
-// Inicializar Google Sheets
+// =======================
+// INICIALIZAR GOOGLE SHEETS
+// =======================
 async function initializeSheets() {
   try {
     sheetsInstance = new GoogleSheetsService();
     await sheetsInstance.initialize();
-    console.log('✅ Sheets service ready');
+    detectionService.setSheetsInstance(sheetsInstance);
+    console.log('✅ Google Sheets y Detection Service inicializados correctamente');
   } catch (err) {
-    console.error('❌ Could not initialize Sheets:', err.message);
+    console.error('❌ No se pudo inicializar Google Sheets:', err.message);
   }
 }
-
-// Llamadas iniciales
-loadFamilyRules();
 initializeSheets();
 
-// Health check
+// =======================
+// ENDPOINT /health
+// =======================
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
@@ -66,7 +60,9 @@ app.get('/health', (req, res) => {
   });
 });
 
-// 🔍 Detect filter endpoint
+// =======================
+// ENDPOINT /api/detect-filter
+// =======================
 app.post('/api/detect-filter', async (req, res) => {
   try {
     const { query } = req.body;
@@ -78,47 +74,33 @@ app.post('/api/detect-filter', async (req, res) => {
       return res.status(500).json({ status: 'ERROR', message: 'Sheets not initialized' });
     }
 
-    const result = await sheetsInstance.findBySKUorOEM(query);
-    if (!result) {
-      return res.status(404).json({ status: 'NOT_FOUND', message: `No match for ${query}` });
+    const q = query.trim().toUpperCase();
+    console.log(`🔍 Detectando filtro: ${q}`);
+
+    // Paso 1: Buscar en Google Sheets
+    const result = await sheetsInstance.searchInMaster(q);
+
+    if (result && result.found) {
+      console.log(`✅ Encontrado en Master Sheet: ${result.data.sku || q}`);
+      return res.json({
+        status: 'OK',
+        source: 'database',
+        data: result.data
+      });
     }
 
-    // Aplicar FAMILY_RULES
-    let rule = familyRules.find(r =>
-      r.family.toLowerCase() === (result.family || '').toLowerCase() &&
-      r.duty.toLowerCase() === (result.duty || '').toLowerCase()
-    );
+    // Paso 2: Si no está en la base, detectar por patrón
+    console.log('⚙️ No encontrado en base, ejecutando detección lógica...');
+    const detectResult = await detectionService.detectFilter(q);
 
-    const prefix = rule ? rule.prefix : 'ELX'; // fallback
-    const homologatedSku = `${prefix}-${(result.sku || query).replace(/\s+/g, '')}`;
-
-    // 📦 Respuesta estructurada
-    res.json({
+    return res.json({
       status: 'OK',
-      query: query,
-      homologated_sku: homologatedSku,
-      family: result.family,
-      duty: result.duty,
-      filter_type: result.filter_type,
-      description: result.description,
-      oem_codes: result.oem_codes,
-      cross_reference: result.cross_reference,
-      engine_applications: result.engine_applications,
-      equipment_applications: result.equipment_applications,
-      height_mm: result.height_mm,
-      outer_diameter_mm: result.outer_diameter_mm,
-      thread_size: result.thread_size,
-      micron_rating: result.micron_rating,
-      bypass_valve_psi: result.bypass_valve_psi,
-      hydrostatic_burst_psi: result.hydrostatic_burst_psi,
-      rated_flow_gpm: result.rated_flow_gpm,
-      weight_grams: result.weight_grams,
-      manufacturing_standards: result.manufacturing_standards,
-      certification_standards: result.certification_standards
+      source: 'pattern_detection',
+      data: detectResult
     });
 
   } catch (error) {
-    console.error('❌ Error in /api/detect-filter:', error);
+    console.error('❌ Error en /api/detect-filter:', error);
     res.status(500).json({
       status: 'ERROR',
       message: 'Fallo interno en detect-filter',
@@ -127,7 +109,9 @@ app.post('/api/detect-filter', async (req, res) => {
   }
 });
 
-// Servidor activo
+// =======================
+// SERVIDOR ACTIVO
+// =======================
 app.listen(PORT, () => {
-  console.log(`🚀 ELIMFILTERS Proxy API running on port ${PORT}`);
+  console.log(`🚀 ELIMFILTERS Proxy API v3.1.0 corriendo en puerto ${PORT}`);
 });
