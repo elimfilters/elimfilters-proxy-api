@@ -1,6 +1,5 @@
 // =========================================
-// ELIMFILTERS Proxy API v3.1.2
-// server.js
+// ELIMFILTERS Proxy API v3.1.3 (Keep-Alive)
 // =========================================
 
 require('dotenv').config();
@@ -8,6 +7,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const https = require('https');
 const GoogleSheetsService = require('./googleSheetsConnector');
 const detectionService = require('./detectionService');
 
@@ -52,7 +52,7 @@ app.get('/health', (req, res) => {
     status: 'ok',
     timestamp: new Date().toISOString(),
     service: 'ELIMFILTERS Proxy API',
-    version: '3.1.2',
+    version: '3.1.3',
     endpoints: {
       health: 'GET /health',
       detect: 'POST /api/detect-filter'
@@ -77,8 +77,8 @@ app.post('/api/detect-filter', async (req, res) => {
     const q = query.trim().toUpperCase();
     console.log(`🔍 Detectando filtro: ${q}`);
 
-    // Paso 1: Buscar en Google Sheets usando searchProducts()
-    const allProducts = await sheetsInstance.searchProducts('');
+    // Paso 1: Buscar en Google Sheets
+    const allProducts = await sheetsInstance.getProducts();
     const found = allProducts.find(p =>
       (p.query_norm && p.query_norm.toUpperCase() === q) ||
       (p.sku && p.sku.toUpperCase() === q) ||
@@ -116,8 +116,19 @@ app.post('/api/detect-filter', async (req, res) => {
 });
 
 // =======================
+// KEEP-ALIVE PARA RAILWAY
+// =======================
+setInterval(() => {
+  https.get('https://elimfilters-proxy-api-production.up.railway.app/health', (res) => {
+    console.log('🔄 Keep-alive ping:', res.statusCode);
+  }).on('error', (err) => {
+    console.error('⚠️ Keep-alive error:', err.message);
+  });
+}, 4 * 60 * 1000); // cada 4 minutos
+
+// =======================
 // SERVIDOR ACTIVO
 // =======================
 app.listen(PORT, () => {
-  console.log(`🚀 ELIMFILTERS Proxy API v3.1.2 corriendo en puerto ${PORT}`);
+  console.log(`🚀 ELIMFILTERS Proxy API v3.1.3 corriendo en puerto ${PORT}`);
 });
