@@ -1,82 +1,80 @@
-// =========================
-// FAMILY DETECTION RULES v3.6.0
-// =========================
+/**
+ * ELIMFILTERS detectionService v3.3.0
+ * Clasifica el filtro, determina familia, duty y genera SKU.
+ */
 
-function detectFilterFamily(query, context = '') {
-  const combined = (query + ' ' + context).toUpperCase();
+const detectionService = {
+  async detectFilter(query) {
+    if (!query) return { status: 'ERROR', message: 'Empty query' };
 
-  const patterns = {
-    'AIR': [
-      'AIR FILTER', 'AIRE', 'RADIAL SEAL', 'INNER ELEMENT',
-      'OUTER ELEMENT', 'PRIMARY AIR', 'SECONDARY AIR'
-    ],
-    'OIL': [
-      'OIL FILTER', 'LUBE FILTER', 'ACEITE', 'LUBRICANTE', 'MOTOR OIL'
-    ],
-    'FUEL': [
-      'FUEL FILTER', 'FILTRO DE COMBUSTIBLE', 'DIESEL FILTER', 'GASOLINE FILTER'
-    ],
-    'SEPARATOR': [
-      'FUEL WATER SEPARATOR', 'SEPARATOR', 'SEPARADOR', 'COALESCER'
-    ],
-    'HYDRAULIC': [
-      'HYDRAULIC FILTER', 'HIDRAULICO', 'RETURN LINE', 'SUCTION FILTER'
-    ],
-    'COOLANT': [
-      'COOLANT FILTER', 'REFRIGERANTE', 'WATER FILTER'
-    ],
-    'CABIN': [
-      'CABIN FILTER', 'CABINA', 'A/C FILTER', 'INTERIOR FILTER'
-    ],
-    'AIR DRYER': [
-      'AIR DRYER', 'SECANTE', 'DESHUMIDIFICADOR', 'BRAKE DRYER'
-    ],
-    'TURBINE': [
-      'PARKER TURBINE SERIES', 'TURBINA PARKER', 'TURBINE SEPARATOR',
-      'TURBINE SERIES', 'TURBINA SEPARADOR'
-    ],
-    'HOUSING': [
-      'CARCASA', 'HOUSING', 'FILTER HOUSING', 'BODY FILTER'
-    ],
-    'KIT DIESEL': [
-      'KIT DIESEL', 'DIESEL ENGINE KIT'
-    ],
-    'KIT GASOLINE': [
-      'KIT GASOLINA', 'GASOLINE ENGINE KIT'
-    ]
-  };
+    const upper = query.trim().toUpperCase();
+    let family = 'UNKNOWN';
+    let duty = 'UNKNOWN';
+    let manufacturer = 'UNKNOWN';
+    let homologated = null;
+    let finalSku = null;
 
-  const mapping = {
-    'AIR': { prefix: 'EA1', duty: 'HD/LD' },
-    'OIL': { prefix: 'EL8', duty: 'HD/LD' },
-    'FUEL': { prefix: 'EF9', duty: 'HD/LD' },
-    'SEPARATOR': { prefix: 'ES9', duty: 'HD' },
-    'HYDRAULIC': { prefix: 'EH6', duty: 'HD' },
-    'COOLANT': { prefix: 'EW7', duty: 'HD' },
-    'CABIN': { prefix: 'EC1', duty: 'HD/LD' },
-    'AIR DRYER': { prefix: 'ED4', duty: 'HD' },
-    'TURBINE': { prefix: 'ET9', duty: 'HD' },
-    'HOUSING': { prefix: 'EA2', duty: 'HD' },
-    'KIT DIESEL': { prefix: 'EK5', duty: 'HD' },
-    'KIT GASOLINE': { prefix: 'EK3', duty: 'LD' }
-  };
+    // --- 1. Family Detection ---
+    const map = [
+      { keys: ['AIR', 'AIRE', 'CA', 'CF', 'RS', 'P1', 'EAF'], family: 'AIR', prefix: 'EA1' },
+      { keys: ['OIL', 'ACEITE', 'LUBE', '1R', 'PH', 'LF', 'B', 'BT'], family: 'OIL', prefix: 'EL8' },
+      { keys: ['FUEL', 'COMBUSTIBLE', 'FF', 'FS', 'P52', 'P77'], family: 'FUEL', prefix: 'EF9' },
+      { keys: ['HYDRAULIC', 'HIDRAULICO', 'HF', 'H'], family: 'HYDRAULIC', prefix: 'EH6' },
+      { keys: ['SEPARATOR', 'SEPARADOR'], family: 'SEPARATOR', prefix: 'ES9' },
+      { keys: ['CABIN', 'A/C', 'AC', 'CABINA'], family: 'CABIN', prefix: 'EC1' },
+      { keys: ['COOLANT', 'REFRIGERANTE'], family: 'COOLANT', prefix: 'EW7' },
+      { keys: ['AIR DRYER', 'SECANTE'], family: 'AIR DRYER', prefix: 'ED4' },
+      { keys: ['PARKER TURBINE SERIES', 'TURBINA'], family: 'TURBINE', prefix: 'ET9' },
+      { keys: ['CARCASA'], family: 'HOUSING', prefix: 'EA2' },
+      { keys: ['KIT DIESEL', 'MOTOR DIESEL'], family: 'KIT-DIESEL', prefix: 'EK5' },
+      { keys: ['KIT GASOLINE', 'MOTOR GASOLINA'], family: 'KIT-GAS', prefix: 'EK3' }
+    ];
 
-  let detected = 'UNKNOWN';
-  let score = 0;
-
-  for (const [family, keys] of Object.entries(patterns)) {
-    for (const keyword of keys) {
-      if (combined.includes(keyword)) {
-        detected = family;
-        score++;
+    for (const m of map) {
+      if (m.keys.some(k => upper.includes(k))) {
+        family = m.family;
+        homologated = m.prefix;
+        break;
       }
     }
-  }
 
-  return {
-    family: detected,
-    confidence: score > 0 ? 1.0 : 0,
-    prefix: mapping[detected]?.prefix || null,
-    duty_hint: mapping[detected]?.duty || null
-  };
-}
+    // --- 2. Duty Detection (HD vs LD) ---
+    const heavyBrands = ['CATERPILLAR', 'KOMATSU', 'MACK', 'VOLVO', 'JOHN DEERE', 'DETROIT', 'DONALDSON', 'BALDWIN'];
+    const lightBrands = ['TOYOTA', 'FORD', 'MAZDA', 'LEXUS', 'NISSAN', 'BMW', 'MERCEDES', 'HONDA', 'FRAM', 'PUROLATOR'];
+
+    if (heavyBrands.some(b => upper.includes(b))) duty = 'HD';
+    else if (lightBrands.some(b => upper.includes(b))) duty = 'LD';
+
+    // --- 3. Manufacturer Detection ---
+    if (upper.includes('DONALDSON')) manufacturer = 'DONALDSON';
+    else if (upper.includes('FRAM')) manufacturer = 'FRAM';
+    else if (upper.includes('BALDWIN')) manufacturer = 'BALDWIN';
+    else if (upper.includes('CAT')) manufacturer = 'CATERPILLAR';
+    else manufacturer = 'GENERIC';
+
+    // --- 4. Homologated SKU Logic ---
+    const digits = upper.replace(/\D/g, '');
+    const lastFour = digits.slice(-4);
+    if (homologated && lastFour) {
+      finalSku = homologated + lastFour;
+    }
+
+    // --- 5. Validate final SKU ---
+    if (!finalSku || !/^[A-Z]{2}\d{5}$|^[A-Z]{3}\d{4}$/.test(finalSku)) {
+      finalSku = homologated ? homologated + '0000' : 'UNKNOWN';
+    }
+
+    // --- 6. Return structured output ---
+    return {
+      status: 'OK',
+      query: upper,
+      family,
+      duty,
+      source: manufacturer,
+      homologated_sku: homologated,
+      final_sku: finalSku
+    };
+  }
+};
+
+module.exports = detectionService;
