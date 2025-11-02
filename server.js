@@ -1,59 +1,39 @@
 require('dotenv').config();
-
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-
 const GoogleSheetsService = require('./googleSheetsConnector');
-const detectionService = require('./detectionService');
-const { processFilterCode } = require('./filterProcessor');
 
 const app = express();
+const PORT = process.env.PORT || 3000;
 
-// Confiar en proxy (Railway)
-app.set('trust proxy', 1);
-
-// CORS limitado a los dominios públicos de ELIMFILTERS
-app.use(cors({
-  origin: [
-    'https://elimfilters.com',
-    'https://www.elimfilters.com'
-  ],
-  methods: ['GET','POST'],
-}));
-
-// Body parser JSON
+app.use(helmet());
+app.use(cors());
 app.use(express.json());
 
-// Rate limiting básico para /api/*
-const limiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minuto
-  max: 30,             // 30 req/min por IP
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-app.use('/api/', limiter);
+// Rate limiter básico
+app.use(rateLimit({
+  windowMs: 60 * 1000,
+  max: 100,
+  message: { status: 'ERROR', message: 'Too many requests' }
+}));
 
-// ===============================
-// Inicialización de servicios
-// ===============================
 let sheetsInstance;
 
-async function initServices() {
+// Inicializar Google Sheets
+async function initializeSheets() {
   try {
     sheetsInstance = new GoogleSheetsService();
     await sheetsInstance.initialize();
-    detectionService.setSheetsInstance(sheetsInstance);
-    console.log('[INIT] Google Sheets listo');
+    console.log('✅ Sheets service ready');
   } catch (err) {
-    console.error('[INIT ERROR] No se pudo inicializar Google Sheets:', err.message);
+    console.error('❌ Could not initialize Sheets:', err.message);
   }
 }
-initServices();
+initializeSheets();
 
-// ===============================
-// /health
-// ===============================
+// Health check
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
@@ -62,77 +42,64 @@ app.get('/health', (req, res) => {
     version: '3.0.0',
     endpoints: {
       health: 'GET /health',
-      detect: 'POST /api/detect-filter',
-    },
+      detect: 'POST /api/detect-filter'
+    }
   });
 });
 
-// ===============================
-// /api/detect-filter
-// Esta es la ruta oficial que usará WordPress
-// ===============================
+// 🔍 Detect filter endpoint
 app.post('/api/detect-filter', async (req, res) => {
-  // Aceptar distintos nombres de campo por compatibilidad
-  const candidate =
-    (req.body && (req.body.code || req.body.sku || req.body.oem || req.body.query)) ||
-    (req.query && (req.query.code || req.query.sku || req.query.oem || req.query.query)) ||
-    '';
-
-  const normalized = String(candidate || '').trim().toUpperCase();
-
-  if (!normalized) {
-    return res.status(400).json({
-      status: 'ERROR',
-      message: 'Falta código de búsqueda (query vacío)',
-    });
-  }
-
   try {
-    // Lógica central interna
-    // processFilterCode debe aplicar:
-    //  - normalización
-    //  - lookup en Google Sheets / DB
-    //  - reglas de familia / duty
-    //  - generación SKU oficial
-    //  - construcción de respuesta final
-    const result = await processFilterCode(normalized);
+    const { query } = req.body;
+    if (!query || query.trim() === '') {
+      return res.status(400).json({ status: 'ERROR', message: 'Query required' });
+    }
 
-    // Si el pipeline interno ya construye respuesta estándar,
-    // la exponemos tal cual con status OK.
-    return res.status(200).json({
+    if (!sheetsInstance) {
+      return res.status(500).json({ status: 'ERROR', message: 'Sheets not initialized' });
+    }
+
+    const result = await sheetsInstance.findBySKUorOEM(query);
+    if (!result) {
+      return res.status(404).json({ status: 'NOT_FOUND', message: `No match for ${query}` });
+    }
+
+    // Formateo de respuesta limpio
+    res.json({
       status: 'OK',
-      ...result,
+      sku: result.sku,
+      family: result.family,
+      duty: result.duty,
+      filter_type: result.filter_type,
+      media_type: result.media_type,
+      description: result.description,
+      oem_codes: result.oem_codes,
+      cross_reference: result.cross_reference,
+      engine_applications: result.engine_applications,
+      equipment_applications: result.equipment_applications,
+      height_mm: result.height_mm,
+      outer_diameter_mm: result.outer_diameter_mm,
+      thread_size: result.thread_size,
+      micron_rating: result.micron_rating,
+      bypass_valve_psi: result.bypass_valve_psi,
+      hydrostatic_burst_psi: result.hydrostatic_burst_psi,
+      rated_flow_gpm: result.rated_flow_gpm,
+      weight_grams: result.weight_grams,
+      manufacturing_standards: result.manufacturing_standards,
+      certification_standards: result.certification_standards
     });
 
-  } catch (err) {
-    console.error('[DETECT-FILTER] ERROR:', err);
-    return res.status(500).json({
+  } catch (error) {
+    console.error('❌ Error in /api/detect-filter:', error);
+    res.status(500).json({
       status: 'ERROR',
       message: 'Fallo interno en detect-filter',
-      details: err.message || null,
+      details: error.message || null
     });
   }
 });
 
-// ===============================
-// Manejador de errores global
-// ===============================
-app.use((err, req, res, next) => {
-  console.error('[ERROR GLOBAL]:', err);
-  res.status(500).json({
-    status: 'ERROR',
-    message: err.message || 'Internal server error',
-  });
-});
-
-// ===============================
-// Arranque servidor
-// ===============================
-const PORT = process.env.PORT || 3000;
+// Servidor activo
 app.listen(PORT, () => {
-  console.log('✅ ELIMFILTERS Proxy API v3.0.0');
-  console.log('🔒 Reglas v2.2.3 protegidas | Sin n8n');
-  console.log(`🚀 Listening on port ${PORT}`);
-  console.log('📊 Health: GET /health');
-  console.log('🔎 Detect: POST /api/detect-filter');
+  console.log(`🚀 ELIMFILTERS Proxy API running on port ${PORT}`);
 });
