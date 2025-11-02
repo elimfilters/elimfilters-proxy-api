@@ -1,5 +1,6 @@
 // =========================================
-// ELIMFILTERS Proxy API v3.1.3 (Keep-Alive)
+// ELIMFILTERS Proxy API v3.1.4
+// server.js
 // =========================================
 
 require('dotenv').config();
@@ -7,11 +8,12 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-const https = require('https');
 const GoogleSheetsService = require('./googleSheetsConnector');
 const detectionService = require('./detectionService');
 
 const app = express();
+app.set('trust proxy', 1); // ✅ Necesario para Railway/Cloudflare
+
 const PORT = process.env.PORT || 3000;
 
 // =======================
@@ -21,6 +23,7 @@ app.use(helmet());
 app.use(cors());
 app.use(express.json());
 
+// Limitador de solicitudes (protección básica)
 app.use(rateLimit({
   windowMs: 60 * 1000,
   max: 100,
@@ -52,7 +55,7 @@ app.get('/health', (req, res) => {
     status: 'ok',
     timestamp: new Date().toISOString(),
     service: 'ELIMFILTERS Proxy API',
-    version: '3.1.3',
+    version: '3.1.4',
     endpoints: {
       health: 'GET /health',
       detect: 'POST /api/detect-filter'
@@ -78,6 +81,10 @@ app.post('/api/detect-filter', async (req, res) => {
     console.log(`🔍 Detectando filtro: ${q}`);
 
     // Paso 1: Buscar en Google Sheets
+    if (!sheetsInstance.getProducts || typeof sheetsInstance.getProducts !== 'function') {
+      throw new Error('GoogleSheetsService no tiene el método getProducts');
+    }
+
     const allProducts = await sheetsInstance.getProducts();
     const found = allProducts.find(p =>
       (p.query_norm && p.query_norm.toUpperCase() === q) ||
@@ -116,19 +123,8 @@ app.post('/api/detect-filter', async (req, res) => {
 });
 
 // =======================
-// KEEP-ALIVE PARA RAILWAY
-// =======================
-setInterval(() => {
-  https.get('https://elimfilters-proxy-api-production.up.railway.app/health', (res) => {
-    console.log('🔄 Keep-alive ping:', res.statusCode);
-  }).on('error', (err) => {
-    console.error('⚠️ Keep-alive error:', err.message);
-  });
-}, 4 * 60 * 1000); // cada 4 minutos
-
-// =======================
 // SERVIDOR ACTIVO
 // =======================
 app.listen(PORT, () => {
-  console.log(`🚀 ELIMFILTERS Proxy API v3.1.3 corriendo en puerto ${PORT}`);
+  console.log(`🚀 ELIMFILTERS Proxy API v3.1.4 corriendo en puerto ${PORT}`);
 });
