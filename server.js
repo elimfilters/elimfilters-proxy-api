@@ -1,5 +1,5 @@
 // =========================================
-// ELIMFILTERS Proxy API v3.1.1
+// ELIMFILTERS Proxy API v3.1.2
 // server.js
 // =========================================
 
@@ -52,7 +52,7 @@ app.get('/health', (req, res) => {
     status: 'ok',
     timestamp: new Date().toISOString(),
     service: 'ELIMFILTERS Proxy API',
-    version: '3.1.1',
+    version: '3.1.2',
     endpoints: {
       health: 'GET /health',
       detect: 'POST /api/detect-filter'
@@ -77,8 +77,8 @@ app.post('/api/detect-filter', async (req, res) => {
     const q = query.trim().toUpperCase();
     console.log(`🔍 Detectando filtro: ${q}`);
 
-    // Paso 1: Buscar en Google Sheets
-    const allProducts = await sheetsInstance.getProducts();
+    // Paso 1: Buscar en Google Sheets usando searchProducts()
+    const allProducts = await sheetsInstance.searchProducts('');
     const found = allProducts.find(p =>
       (p.query_norm && p.query_norm.toUpperCase() === q) ||
       (p.sku && p.sku.toUpperCase() === q) ||
@@ -119,5 +119,5 @@ app.post('/api/detect-filter', async (req, res) => {
 // SERVIDOR ACTIVO
 // =======================
 app.listen(PORT, () => {
-  console.log(`🚀 ELIMFILTERS Proxy API v3.1.1 corriendo en puerto ${PORT}`);
+  console.log(`🚀 ELIMFILTERS Proxy API v3.1.2 corriendo en puerto ${PORT}`);
 });
