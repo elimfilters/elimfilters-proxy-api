@@ -1,56 +1,29 @@
-// =========================================
-// ELIMFILTERS Proxy API v3.2.1
-// =========================================
+// server.js
+// ELIMFILTERS Proxy API v3.3.0
 
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-const GoogleSheetsService = require('./googleSheetsConnector');
-const detectionService = require('./detectionService');
+const { detectFilter } = require('./detectionService');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// =======================
-// CONFIGURACIÓN GLOBAL
-// =======================
-app.use(helmet());
+// Middleware
 app.use(cors());
 app.use(express.json());
-app.use(rateLimit({
-  windowMs: 60 * 1000,
-  max: 100,
-  message: { status: 'ERROR', message: 'Too many requests' }
-}));
+app.use(helmet());
+app.use(rateLimit({ windowMs: 60 * 1000, max: 100 }));
 
-let sheetsInstance = null;
-
-// =======================
-// INICIALIZAR GOOGLE SHEETS
-// =======================
-async function initializeSheets() {
-  try {
-    sheetsInstance = new GoogleSheetsService();
-    await sheetsInstance.initialize();
-    detectionService.setSheetsInstance(sheetsInstance);
-    console.log('✅ Google Sheets y Detection Service inicializados correctamente');
-  } catch (err) {
-    console.error('❌ Error inicializando Google Sheets:', err.message);
-  }
-}
-initializeSheets();
-
-// =======================
-// ENDPOINT /health
-// =======================
+// Health endpoint
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
     service: 'ELIMFILTERS Proxy API',
-    version: '3.2.1',
+    version: '3.3.0',
     endpoints: {
       health: 'GET /health',
       detect: 'POST /api/detect-filter'
@@ -58,35 +31,26 @@ app.get('/health', (req, res) => {
   });
 });
 
-// =======================
-// ENDPOINT /api/detect-filter
-// =======================
+// Detect filter
 app.post('/api/detect-filter', async (req, res) => {
   try {
     const { query } = req.body;
-    if (!query || query.trim() === '') {
-      return res.status(400).json({ status: 'ERROR', message: 'Query required' });
-    }
+    if (!query) return res.status(400).json({ status: 'ERROR', message: 'Missing query' });
 
-    const q = query.trim().toUpperCase();
-    console.log(`🔍 Detectando filtro: ${q}`);
+    const result = detectFilter(query);
+    return res.json(result);
 
-    const detectResult = await detectionService.detectFilter(q);
-    res.json({ status: 'OK', ...detectResult });
-
-  } catch (error) {
-    console.error('❌ Error en /api/detect-filter:', error);
-    res.status(500).json({
+  } catch (err) {
+    console.error('Error in detect-filter:', err);
+    return res.status(500).json({
       status: 'ERROR',
-      message: 'Fallo interno en detect-filter',
-      details: error.message || null
+      message: 'Internal failure in detect-filter',
+      details: err.message
     });
   }
 });
 
-// =======================
-// SERVIDOR ACTIVO
-// =======================
+// Start server
 app.listen(PORT, () => {
-  console.log(`🚀 ELIMFILTERS Proxy API v3.2.1 corriendo en puerto ${PORT}`);
+  console.log(`✅ ELIMFILTERS Proxy API v3.3.0 running on port ${PORT}`);
 });
