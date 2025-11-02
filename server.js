@@ -1,6 +1,5 @@
 // =========================================
-// ELIMFILTERS Proxy API v3.2.0
-// server.js
+// ELIMFILTERS Proxy API v3.2.1
 // =========================================
 
 require('dotenv').config();
@@ -20,7 +19,6 @@ const PORT = process.env.PORT || 3000;
 app.use(helmet());
 app.use(cors());
 app.use(express.json());
-
 app.use(rateLimit({
   windowMs: 60 * 1000,
   max: 100,
@@ -39,7 +37,7 @@ async function initializeSheets() {
     detectionService.setSheetsInstance(sheetsInstance);
     console.log('✅ Google Sheets y Detection Service inicializados correctamente');
   } catch (err) {
-    console.error('❌ Error al inicializar Google Sheets:', err.message);
+    console.error('❌ Error inicializando Google Sheets:', err.message);
   }
 }
 initializeSheets();
@@ -52,7 +50,7 @@ app.get('/health', (req, res) => {
     status: 'ok',
     timestamp: new Date().toISOString(),
     service: 'ELIMFILTERS Proxy API',
-    version: '3.2.0',
+    version: '3.2.1',
     endpoints: {
       health: 'GET /health',
       detect: 'POST /api/detect-filter'
@@ -71,32 +69,10 @@ app.post('/api/detect-filter', async (req, res) => {
     }
 
     const q = query.trim().toUpperCase();
-    console.log(`🔍 Buscando filtro: ${q}`);
+    console.log(`🔍 Detectando filtro: ${q}`);
 
-    // Paso 1: Buscar en Google Sheets (base de datos)
-    let found = null;
-    if (sheetsInstance && sheetsInstance.findBySKUorOEM) {
-      found = await sheetsInstance.findBySKUorOEM(q);
-    }
-
-    // Paso 2: Si no se encuentra, ejecutar detección lógica
-    if (!found) {
-      console.log('⚙️ No encontrado en base de datos. Ejecutando detección lógica...');
-      const detectResult = await detectionService.detectFilter(q);
-      return res.json({
-        status: 'OK',
-        source: 'pattern_detection',
-        data: detectResult
-      });
-    }
-
-    // Paso 3: Devolver datos si se encuentra en Sheets
-    console.log(`✅ Coincidencia encontrada en Google Sheets: ${found.sku}`);
-    return res.json({
-      status: 'OK',
-      source: 'database',
-      data: found
-    });
+    const detectResult = await detectionService.detectFilter(q);
+    res.json({ status: 'OK', ...detectResult });
 
   } catch (error) {
     console.error('❌ Error en /api/detect-filter:', error);
@@ -112,5 +88,5 @@ app.post('/api/detect-filter', async (req, res) => {
 // SERVIDOR ACTIVO
 // =======================
 app.listen(PORT, () => {
-  console.log(`🚀 ELIMFILTERS Proxy API v3.2.0 corriendo en puerto ${PORT}`);
+  console.log(`🚀 ELIMFILTERS Proxy API v3.2.1 corriendo en puerto ${PORT}`);
 });
