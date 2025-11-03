@@ -1,93 +1,66 @@
-// detectionService.js
-// ELIMFILTERS Logic v3.3.0
+// =========================================
+// ELIMFILTERS Detection Logic v4.0.0
+// =========================================
 
-function detectFilter(queryRaw) {
-  if (!queryRaw) {
-    return { status: "ERROR", message: "Empty query" };
-  }
+function detectFilter(query) {
+  const q = query.trim().toUpperCase();
+  console.log(`🔎 Analizando código: ${q}`);
 
-  const query = queryRaw.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-  let family = "UNKNOWN";
-  let duty = "UNKNOWN";
-  let source = "GENERIC";
-  let homologated_sku = "EXX";
+  let family = 'UNKNOWN';
+  let duty = 'UNKNOWN';
+  let source = 'GENERIC';
+  let homologated_sku = 'EXX';
+  let final_sku = 'EXX0000';
 
-  // ========================
-  // 1️⃣ FAMILY DETECTION
-  // ========================
-  const AIR = ["AIR", "AIRE", "CA", "CF", "RS", "P1", "EAF"];
-  const OIL = ["OIL", "ACEITE", "LUBE", "1R", "PH", "LF", "B", "BT"];
-  const CABIN = ["CABIN", "A/C", "AC", "CABINA"];
-  const HYDRAULIC = ["HYDRAULIC", "HIDRAULICO", "HF", "H"];
-  const SEPARATOR = ["SEPARATOR", "SEPARADOR", "PS"];
-  const COOLANT = ["COOLANT", "REFRIGERANTE"];
-  const AIR_DRYER = ["AIRDRYER", "SECANTE", "DRYER"];
-  const TURBINE = ["TURBINA", "PARKER"];
-  const HOUSING = ["CARCASA"];
-  const KIT_DIESEL = ["KITDIESEL", "MOTORDIESEL"];
-  const KIT_GASOLINE = ["KITGAS", "MOTORGASOLINA"];
-
-  const FAMILY_PREFIX = [
-    [AIR, "EA1"],
-    [OIL, "EL8"],
-    [CABIN, "EC1"],
-    [HYDRAULIC, "EH6"],
-    [SEPARATOR, "ES9"],
-    [COOLANT, "EW7"],
-    [AIR_DRYER, "ED4"],
-    [TURBINE, "ET9"],
-    [HOUSING, "EA2"],
-    [KIT_DIESEL, "EK5"],
-    [KIT_GASOLINE, "EK3"],
+  // === 1️⃣ Detectar tipo de filtro (Family) ===
+  const rules = [
+    { keys: ["AIR", "AIRE", "CA", "CF", "RS", "P1", "EAF"], result: "AIR", prefix: "EA1" },
+    { keys: ["OIL", "ACEITE", "LUBE", "1R", "LF", "PH", "B ", "BT"], result: "OIL", prefix: "EL8" },
+    { keys: ["FUEL", "COMBUSTIBLE", "PS", "SEPARATOR", "SEPARADOR"], result: "FUEL SEPARATOR", prefix: "ES9" },
+    { keys: ["HYDRAULIC", "HIDRAULICO"], result: "HYDRAULIC", prefix: "EH6" },
+    { keys: ["COOLANT", "REFRIGERANTE"], result: "COOLANT", prefix: "EW7" },
+    { keys: ["CABIN", "CABINA", "A/C", "AC"], result: "CABIN", prefix: "EC1" },
+    { keys: ["DRYER", "SECANTE"], result: "AIR DRYER", prefix: "ED4" },
+    { keys: ["TURBINE", "PARKER"], result: "TURBINE", prefix: "ET9" },
+    { keys: ["CARCASA"], result: "CARCASA", prefix: "EA2" },
+    { keys: ["KIT", "ENGINE", "MOTOR"], result: "KIT", prefix: "EK5" }
   ];
 
-  for (const [patterns, prefix] of FAMILY_PREFIX) {
-    if (patterns.some(p => query.includes(p))) {
-      family = prefix;
+  for (const rule of rules) {
+    if (rule.keys.some(k => q.includes(k))) {
+      family = rule.result;
+      homologated_sku = rule.prefix;
       break;
     }
   }
 
-  // ========================
-  // 2️⃣ SOURCE DETECTION
-  // ========================
-  if (/^P5/i.test(query)) source = "DONALDSON";
-  else if (/^PH|CA/i.test(query)) source = "FRAM";
-  else if (/^1R|7W|9L|8N/i.test(query)) source = "CATERPILLAR";
-  else if (/LF|LFP|LFW/i.test(query)) source = "FLEETGUARD";
-  else if (/BF|BT|BW/i.test(query)) source = "BALDWIN";
-  else if (/WIX/i.test(query)) source = "WIX";
+  // === 2️⃣ Determinar Duty (HD o LD) ===
+  const hdMakers = ["CATERPILLAR", "CAT", "KOMATSU", "VOLVO", "MACK", "CUMMINS", "JOHN DEERE", "PERKINS"];
+  const ldMakers = ["TOYOTA", "FORD", "NISSAN", "HONDA", "LEXUS", "BMW", "MERCEDES", "MAZDA"];
 
-  // ========================
-  // 3️⃣ DUTY DETECTION
-  // ========================
-  const HD_BRANDS = ["CATERPILLAR", "KOMATSU", "VOLVO", "MACK", "JOHNDEERE", "CUMMINS", "DETROIT"];
-  const LD_BRANDS = ["TOYOTA", "FORD", "MAZDA", "LEXUS", "NISSAN", "BMW", "MERCEDES", "CHEVROLET"];
+  if (hdMakers.some(m => q.includes(m))) duty = "HD";
+  else if (ldMakers.some(m => q.includes(m))) duty = "LD";
 
-  if (HD_BRANDS.some(b => query.includes(b))) duty = "HD";
-  else if (LD_BRANDS.some(b => query.includes(b))) duty = "LD";
-  else duty = /1R|P5|HF|FF/i.test(query) ? "HD" : "LD";
+  // === 3️⃣ Verificar fabricantes homologados ===
+  if (q.startsWith("P") || q.includes("DONALDSON")) {
+    source = "DONALDSON";
+  } else if (q.startsWith("PH") || q.includes("FRAM")) {
+    source = "FRAM";
+  } else {
+    source = "OEM";
+  }
 
-  // ========================
-  // 4️⃣ HOMOLOGATED SKU LOGIC
-  // ========================
-  if (source === "DONALDSON") homologated_sku = query;
-  else if (source === "FRAM") homologated_sku = query;
-  else homologated_sku = "EXX";
+  // === 4️⃣ Asignar últimos 4 dígitos ===
+  const numbers = q.replace(/\D/g, "");
+  const last4 = numbers.slice(-4) || "0000";
+  final_sku = `${homologated_sku}${last4}`;
 
-  // ========================
-  // 5️⃣ FINAL SKU BUILD
-  // ========================
-  const numPart = query.match(/(\d{4,})$/);
-  const last4 = numPart ? numPart[0].slice(-4) : "0000";
-
-  const prefix = family !== "UNKNOWN" ? family : "EXX";
-  const final_sku = `${prefix}${last4}`;
+  console.log(`✅ Resultado: ${q} → ${final_sku}`);
 
   return {
     status: "OK",
-    query,
-    family: family === "UNKNOWN" ? "UNIDENTIFIED" : family,
+    query: q,
+    family,
     duty,
     source,
     homologated_sku,
