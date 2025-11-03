@@ -1,101 +1,117 @@
-═══════════════════════════════════════════════════════════════
-  ELIMFILTERS PROXY API v3.1.2 - DEPLOYMENT CORREGIDO
-═══════════════════════════════════════════════════════════════
+╔══════════════════════════════════════════════════════════════╗
+║  INSTRUCCIONES - DEPLOYMENT PROXY v3.0.0                     ║
+╚══════════════════════════════════════════════════════════════╝
 
-✅ PROBLEMAS CORREGIDOS:
-- Estructura de carpetas corregida (config/ y utils/)
-- REGLAS_MAESTRAS.json movido a config/
-- normalizeQuery.js movido a utils/
-- dataAccess.js con función queryMasterDatabase
-- Todos los archivos en lugares correctos
-
-📦 ARCHIVOS INCLUIDOS: 19 archivos + 2 carpetas
-
-📁 ESTRUCTURA:
-elimfilters-proxy-api/
-├── config/
-│   └── REGLAS_MAESTRAS.json
-├── utils/
-│   └── normalizeQuery.js
-├── businessLogic.js
-├── dataAccess.js
-├── detectionService.js
-├── filterProcessor.js
-├── googleSheetsConnector.js
-├── homologationDB.js
-├── jsonBuilder.js
-├── rulesProtection.js
-├── security.js
-├── server.js
-├── utils.js
-├── package.json
-├── railway.json
-├── Dockerfile
-├── .env.example
-├── .gitignore
-├── INSTRUCCIONES.txt
-└── README.md
+⚠️  IMPORTANTE: DEBES ELIMINAR ARCHIVOS VIEJOS PRIMERO
 
 ═══════════════════════════════════════════════════════════════
-  PASOS PARA DEPLOYMENT
-═══════════════════════════════════════════════════════════════
 
-1. DESCOMPRIMIR ZIP
-   - Extraer elimfilters-proxy-v3.0.0-FIXED-FINAL.zip
-   - Verás carpeta "fixed-proxy" con todos los archivos
+OPCIÓN 1: DEPLOYMENT VÍA GITHUB (RECOMENDADO)
+─────────────────────────────────────────────
 
-2. SUBIR A GITHUB
-   - Ir a: https://github.com/elimfilters/elimfilters-proxy-api
-   - Eliminar TODOS los archivos actuales
-   - Subir TODOS los archivos de fixed-proxy/
-   - Commit: "Fix v3.1.2 - estructura corregida"
+PASO 1: Clonar o abrir tu repositorio de GitHub
+   cd ruta/a/elimfilters-proxy-api
 
-3. RAILWAY AUTO-DEPLOYA
-   - Esperar 2-3 minutos
-   - Railway detecta cambios y redeploya automático
+PASO 2: ELIMINAR TODOS LOS ARCHIVOS VIEJOS
+   # En Windows:
+   del /Q *.*
+   rmdir /S /Q config
 
-4. VERIFICAR LOGS
-   - Railway → Deployments → Ver logs
-   - Debe mostrar: "✅ ELIMFILTERS Proxy API v3.1.2"
-   - Sin errores de "Cannot find module"
+   # En Mac/Linux:
+   rm -rf *
+   rm -rf .*
 
-5. PROBAR ENDPOINTS
+PASO 3: Copiar TODOS los archivos de este ZIP
+   - Copiar TODO el contenido de este ZIP
+   - Pegar en el directorio del repositorio
 
-PowerShell:
-$url = "https://elimfilters-proxy-api-production.up.railway.app/health"
-Invoke-RestMethod -Uri $url -Method GET
+PASO 4: Verificar que server.js tenga v3.0.0
+   # Abrir server.js
+   # Buscar línea 62: version: '3.0.0',
 
-$baseUrl = "https://elimfilters-proxy-api-production.up.railway.app"
-$body = @{ code = "P552100" } | ConvertTo-Json
-Invoke-RestMethod -Uri "$baseUrl/api/detect-filter" -Method POST -Body $body -ContentType "application/json"
+PASO 5: Commit y Push
+   git add .
+   git commit -m "Deploy v3.0.0 - Limpio"
+   git push origin main
 
-═══════════════════════════════════════════════════════════════
-  VARIABLES DE ENTORNO (Ya configuradas)
-═══════════════════════════════════════════════════════════════
+PASO 6: Esperar 2-3 minutos que Railway detecte cambios
 
-✅ GOOGLE_CREDENTIALS - Ya está en Railway
-✅ GOOGLE_SHEETS_ID - Ya está en Railway
-✅ PORT=3000 - Ya está en Railway
-
-No necesitas tocar las variables.
+PASO 7: VERIFICAR
+   curl https://elimfilters-proxy-api-production.up.railway.app/health
+   
+   Debe mostrar: "version": "3.0.0"
 
 ═══════════════════════════════════════════════════════════════
-  RESULTADO ESPERADO
+
+OPCIÓN 2: DEPLOYMENT DIRECTO EN RAILWAY
+────────────────────────────────────────
+
+PASO 1: Ir a Railway Dashboard
+   https://railway.app/
+
+PASO 2: Seleccionar tu proyecto
+   elimfilters-proxy-api
+
+PASO 3: Settings → Delete Service
+   (Eliminar servicio completamente)
+
+PASO 4: Create New Service → From GitHub
+   Seleccionar: elimfilters/elimfilters-proxy-api
+
+PASO 5: Subir archivos de este ZIP al repo de GitHub primero
+   (Ver Opción 1)
+
 ═══════════════════════════════════════════════════════════════
 
-/health:
-{
-  "status": "ok",
-  "version": "3.1.2",
-  "service": "ELIMFILTERS Proxy API"
-}
+⚠️  EL PROBLEMA QUE TENÍAS
+─────────────────────────
 
-/api/detect-filter:
-{
-  "status": "OK",
-  "sku": "EL82100",
-  "family": "OIL",
-  "duty": "HD"
-}
+❌ Railway está usando v2.4.0 porque los archivos viejos 
+   están mezclados con los nuevos en GitHub.
+
+✅ Solución: ELIMINAR archivos viejos antes de copiar nuevos
 
 ═══════════════════════════════════════════════════════════════
+
+📋 CHECKLIST
+────────────
+
+[ ] Archivos viejos eliminados del repo
+[ ] Archivos nuevos copiados del ZIP
+[ ] Verificado server.js → version: '3.0.0'
+[ ] git push ejecutado
+[ ] Railway detectó cambios (ver Activity en dashboard)
+[ ] curl /health muestra "version": "3.0.0"
+[ ] Probar: curl -X POST /api/detect-filter -d '{"code":"P552100"}'
+
+═══════════════════════════════════════════════════════════════
+
+✅ VARIABLES DE ENTORNO EN RAILWAY
+──────────────────────────────────
+
+MANTENER:
+   GOOGLE_SHEETS_ID=1ZYI5c0enkuvWAveu8HMaCUk1cek_VDrX8GtgKW7VP6U
+   GOOGLE_CREDENTIALS=<tu_json>
+   PORT=3000
+
+ELIMINAR:
+   N8N_WEBHOOK_URL  ← Ya no se usa
+
+═══════════════════════════════════════════════════════════════
+
+🆘 AYUDA
+────────
+
+Si después de hacer estos pasos Railway sigue mostrando v2.4.0:
+
+1. Ve a Railway Dashboard
+2. Deployments → Ver último deployment
+3. Logs → Verificar que no hay errores
+4. Redeploy manual si es necesario
+
+═══════════════════════════════════════════════════════════════
+
+Versión de este paquete: 3.0.0
+Fecha: 2025-10-29
+Reglas: v2.2.3 (16 combinaciones correctas)
+Sin n8n: ✅
