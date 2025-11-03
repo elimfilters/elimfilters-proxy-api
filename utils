@@ -10,3 +10,4 @@ function normalizeQuery(query) {
 }
 
 module.exports = normalizeQuery;
+
