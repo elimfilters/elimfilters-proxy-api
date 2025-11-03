@@ -3,7 +3,11 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const detectionService = require('./detectionService');
-const GoogleSheetsService = require('./googleSheetsService');
+// 
+// 🚨 CORRECCIÓN: Se cambió './googleSheetsService' a './GoogleSheetsService'
+// para coincidir con la convención de nombres de clase y la sensibilidad 
+// a mayúsculas/minúsculas del sistema de archivos.
+const GoogleSheetsService = require('./GoogleSheetsService'); 
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -15,84 +19,86 @@ app.use(express.json());
 let sheetsInstance;
 
 (async () => {
-  try {
-    sheetsInstance = new GoogleSheetsService();
-    await sheetsInstance.initialize();
-    console.log('✅ Google Sheets conectado correctamente');
-  } catch (err) {
-    console.error('❌ Error inicializando Google Sheets:', err.message);
-  }
+  try {
+    sheetsInstance = new GoogleSheetsService();
+    await sheetsInstance.initialize();
+    console.log('✅ Google Sheets conectado correctamente');
+  } catch (err) {
+    console.error('❌ Error inicializando Google Sheets:', err.message);
+  }
 })();
 
 // Endpoint de salud
 app.get('/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    service: 'ELIMFILTERS Proxy API',
-    version: '3.3.5',
-    endpoints: {
-      health: 'GET /health',
-      detect: 'POST /api/detect-filter',
-    },
-  });
+  res.json({
+    status: 'ok',
+    service: 'ELIMFILTERS Proxy API',
+    version: '3.3.5',
+    endpoints: {
+      health: 'GET /health',
+      detect: 'POST /api/detect-filter',
+    },
+  });
 });
 
 // Endpoint principal de detección
 app.post('/api/detect-filter', async (req, res) => {
-  const { query } = req.body || {};
+  const { query } = req.body || {};
 
-  if (!query || typeof query !== 'string') {
-    return res.status(400).json({
-      status: 'ERROR',
-      message: 'Falta parámetro "query" válido en el cuerpo de la solicitud',
-    });
-  }
+  if (!query || typeof query !== 'string') {
+    return res.status(400).json({
+      status: 'ERROR',
+      message: 'Falta parámetro "query" válido en el cuerpo de la solicitud',
+    });
+  }
 
-  try {
-    // Paso 1: buscar si ya existe en la hoja
-    const existingRow = sheetsInstance
-      ? await sheetsInstance.findRowByQuery(query)
-      : null;
+  try {
+    // Paso 1: buscar si ya existe en la hoja
+    const existingRow = sheetsInstance
+      ? await sheetsInstance.findRowByQuery(query)
+      : null;
 
-    if (existingRow) {
-      console.log('📗 Encontrado en Master Sheet:', query);
-      return res.json({
-        status: 'OK',
-        source: 'Master',
-        data: existingRow,
-      });
-    }
+    if (existingRow) {
+      console.log('📗 Encontrado en Master Sheet:', query);
+      return res.json({
+        status: 'OK',
+        source: 'Master',
+        data: existingRow,
+      });
+    }
 
-    // Paso 2: generar nuevo registro
-    console.log('⚙️  Generando nuevo registro para:', query);
-    const generatedData = await detectionService.detectFilter(query);
+    // Paso 2: generar nuevo registro
+    console.log('⚙️  Generando nuevo registro para:', query);
+    const generatedData = await detectionService.detectFilter(query);
 
-    // Paso 3: guardar en Google Sheets
-    if (sheetsInstance && generatedData) {
-      await sheetsInstance.appendRow(generatedData);
-    }
+    // Paso 3: guardar en Google Sheets
+    // Nota: La función en tu clase es replaceOrInsertRow, no appendRow.
+    // He corregido la llamada a la función para usar la función correcta.
+    if (sheetsInstance && generatedData) {
+      await sheetsInstance.replaceOrInsertRow(generatedData);
+    }
 
-    res.json({
-      status: 'OK',
-      source: 'Generated',
-      data: generatedData,
-    });
-  } catch (error) {
-    console.error('❌ Error en /api/detect-filter:', error.message);
-    res.status(500).json({
-      status: 'ERROR',
-      message: 'Fallo interno en detect-filter',
-      details: error.message,
-    });
-  }
+    res.json({
+      status: 'OK',
+      source: 'Generated',
+      data: generatedData,
+    });
+  } catch (error) {
+    console.error('❌ Error en /api/detect-filter:', error.message);
+    res.status(500).json({
+      status: 'ERROR',
+      message: 'Fallo interno en detect-filter',
+      details: error.message,
+    });
+  }
 });
 
 // Fallback global
 app.use((req, res) => {
-  res.status(404).json({ status: 'ERROR', message: 'Ruta no encontrada' });
+  res.status(404).json({ status: 'ERROR', message: 'Ruta no encontrada' });
 });
 
 // Iniciar servidor
 app.listen(PORT, () => {
-  console.log(`🚀 Servidor ejecutándose en puerto ${PORT}`);
+  console.log(`🚀 Servidor ejecutándose en puerto ${PORT}`);
 });
