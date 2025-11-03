@@ -1,0 +1,16 @@
+// utils/normalizeQuery.js
+/**
+ * Normaliza la entrada de búsqueda eliminando espacios, guiones y caracteres inválidos.
+ * Convierte todo a mayúsculas para mantener consistencia en las consultas.
+ * Ejemplo: " p-527682 " → "P527682"
+ */
+
+module.exports = function normalizeQuery(query) {
+  if (!query || typeof query !== 'string') return '';
+
+  return query
+    .trim()
+    .toUpperCase()
+    .replace(/[\s\-_.]+/g, '') // elimina espacios, guiones, puntos y guiones bajos
+    .replace(/[^A-Z0-9]/g, ''); // elimina cualquier símbolo o carácter no alfanumérico
+};
