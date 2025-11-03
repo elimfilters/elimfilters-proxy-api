@@ -1,118 +1,80 @@
+// detectionService.js v3.3.5 — Estable
 const normalizeQuery = require('./utils/normalizeQuery');
-let sheetsInstance = null;
 
-function setSheetsInstance(instance) {
-  sheetsInstance = instance;
+const OEM_MANUFACTURERS = [
+  'CATERPILLAR', 'KOMATSU', 'CUMMINS', 'VOLVO', 'MACK', 'JOHN DEERE',
+  'DETROIT DIESEL', 'PERKINS', 'CASE', 'NEW HOLLAND', 'SCANIA',
+  'MERCEDES TRUCK', 'KENWORTH', 'PETERBILT', 'FREIGHTLINER',
+  'INTERNATIONAL', 'MTU', 'PACCAR', 'HINO', 'IVECO',
+];
+
+const CROSS_MANUFACTURERS = [
+  'DONALDSON', 'BALDWIN', 'FRAM', 'FLEETGUARD', 'WIX', 'PUROLATOR',
+  'MAN', 'PARKER', 'HENGST', 'KNECHT', 'CHAMPION',
+];
+
+const FAMILY_RULES = {
+  AIR: { patterns: ['CA', 'CF', 'RS', 'EAF', 'P1'], prefix: 'EA1' },
+  OIL: { patterns: ['OIL', '1R', 'PH', 'LF', 'B', 'BT'], prefix: 'EL8' },
+  FUEL: { patterns: ['FF', 'FS', 'P77', 'P52'], prefix: 'EF9' },
+  CABIN: { patterns: ['CABIN', 'AC', 'A/C'], prefix: 'EC1' },
+  HYDRAULIC: { patterns: ['HF', 'H'], prefix: 'EH6' },
+  COOLANT: { patterns: ['COOLANT', 'REFRIGERANTE'], prefix: 'EW7' },
+  AIR_DRYER: { patterns: ['DRYER', 'SECANTE'], prefix: 'ED4' },
+  TURBINE: { patterns: ['TURBINA', 'PARKER'], prefix: 'ET9' },
+  HOUSING: { patterns: ['HOUSING', 'CARCASA'], prefix: 'EA2' },
+  KIT_DIESEL: { patterns: ['DIESEL KIT', 'KIT DIESEL'], prefix: 'EK5' },
+  KIT_GASOLINE: { patterns: ['GASOLINE KIT', 'KIT GASOLINA'], prefix: 'EK3' },
+};
+
+function detectFamily(query) {
+  const q = query.toUpperCase();
+  for (const [family, { patterns }] of Object.entries(FAMILY_RULES)) {
+    if (patterns.some(p => q.includes(p))) return family;
+  }
+  return 'UNKNOWN';
 }
 
-/**
- * Detecta tipo de filtro, duty, y genera SKU
- */
-async function detectFilter(rawQuery) {
-  const query = normalizeQuery(rawQuery);
-  const response = { status: 'OK', query_norm: query };
-
-  // --- 1. Si está en Google Sheets ---
-  if (sheetsInstance && typeof sheetsInstance.findRowByQuery === 'function') {
-    const existingRow = await sheetsInstance.findRowByQuery(query);
-    if (existingRow) {
-      return { status: 'OK', source: 'Master', data: existingRow };
-    }
-  }
-
-  // --- 2. Detectar tipo de filtro ---
-  const ref = query.toUpperCase();
-  let family = 'UNKNOWN';
-  let duty = 'UNKNOWN';
-  let source = 'Generated';
-  let homologated_sku = 'EXX';
-  let final_sku = '';
-
-  // --- Clasificación Family ---
-  const patterns = {
-    AIR: ["AIR", "AIRE", "CA", "CF", "RS", "P1", "EAF"],
-    OIL: ["OIL", "ACEITE", "LUBE", "1R", "PH", "LF", "B", "BT"],
-    FUEL: ["FUEL", "COMBUSTIBLE", "GASOIL", "FS", "FF", "PS"],
-    HYDRAULIC: ["HYDRAULIC", "HIDRAULICO", "H"],
-    CABIN: ["CABIN", "AC", "A/C", "CABINA"],
-    SEPARATOR: ["SEPARATOR", "SEPARADOR"],
-    COOLANT: ["COOLANT", "REFRIGERANTE"],
-    AIR_DRYER: ["AIR DRYER", "SECANTE", "SECADOR"],
-    TURBINE: ["TURBINE", "PARKER TURBINE SERIES"],
-    HOUSING: ["CARCASA", "HOUSING"],
-    KIT: ["KIT"]
-  };
-
-  for (const [fam, keys] of Object.entries(patterns)) {
-    if (keys.some(k => ref.includes(k))) {
-      family = fam;
-      break;
-    }
-  }
-
-  // --- 3. Clasificar Duty por fabricante (motor) ---
-  const hdBrands = [
-    "CATERPILLAR", "KOMATSU", "CUMMINS", "VOLVO", "MACK", "JOHN DEERE", "DETROIT",
-    "PERKINS", "CASE", "NEW HOLLAND", "SCANIA", "MERCEDES TRUCK", "KENWORTH",
-    "PETERBILT", "FREIGHTLINER", "INTERNATIONAL", "MTU", "PACCAR", "HINO", "IVECO"
-  ];
-
-  const ldBrands = [
-    "TOYOTA", "FORD", "NISSAN", "HONDA", "BMW", "MERCEDES", "LEXUS", "MAZDA",
-    "SUZUKI", "HYUNDAI", "KIA", "CHEVROLET", "VOLKSWAGEN"
-  ];
-
-  if (hdBrands.some(b => ref.includes(b))) duty = 'HD';
-  else if (ldBrands.some(b => ref.includes(b))) duty = 'LD';
-
-  // --- 4. Prefijos de SKU ---
-  const prefixes = {
-    AIR: "EA1",
-    FUEL: "EF9",
-    OIL: "EL8",
-    CABIN: "EC1",
-    SEPARATOR: "ES9",
-    HYDRAULIC: "EH6",
-    COOLANT: "EW7",
-    AIR_DRYER: "ED4",
-    TURBINE: "ET9",
-    HOUSING: "EA2",
-    KIT: "EK5"
-  };
-
-  homologated_sku = prefixes[family] || "EXX";
-
-  // --- 5. Extraer los últimos 4 dígitos ---
-  const match = query.match(/(\d{4})$/);
-  const last4 = match ? match[1] : "0000";
-  final_sku = `${homologated_sku}${last4}`;
-
-  response.family = family;
-  response.duty = duty;
-  response.source = source;
-  response.homologated_sku = homologated_sku;
-  response.final_sku = final_sku;
-
-  // --- 6. Si existe instancia de Sheet, guardar ---
-  if (sheetsInstance && typeof sheetsInstance.appendRow === 'function') {
-    try {
-      await sheetsInstance.appendRow({
-        query_norm: query,
-        sku: final_sku,
-        family,
-        duty,
-        oem_codes: '',
-        cross_reference: '',
-        filter_type: '',
-        media_type: '',
-        description: 'General-purpose filter record.'
-      });
-    } catch (err) {
-      console.error('⚠️ Error guardando en Sheet:', err.message);
-    }
-  }
-
-  return { status: 'OK', source, data: response };
+function detectDuty(query, family) {
+  const q = query.toUpperCase();
+  if (OEM_MANUFACTURERS.some(m => q.includes(m))) return 'HD';
+  if (['TOYOTA', 'FORD', 'NISSAN', 'MAZDA', 'LEXUS', 'BMW', 'MERCEDES'].some(m => q.includes(m))) return 'LD';
+  if (['KIT_DIESEL', 'HYDRAULIC', 'TURBINE', 'AIR_DRYER'].includes(family)) return 'HD';
+  return 'UNKNOWN';
 }
 
-module.exports = { detectFilter, setSheetsInstance };
+function detectSource(query) {
+  const q = query.toUpperCase();
+  if (CROSS_MANUFACTURERS.some(m => q.includes(m))) return CROSS_MANUFACTURERS.find(m => q.includes(m));
+  if (OEM_MANUFACTURERS.some(m => q.includes(m))) return OEM_MANUFACTURERS.find(m => q.includes(m));
+  return 'GENERIC';
+}
+
+function generateSku(family, query) {
+  const rule = FAMILY_RULES[family];
+  if (!rule) return 'EXX0000';
+  const digits = query.replace(/\D/g, '');
+  const lastFour = digits.slice(-4);
+  return rule.prefix + lastFour;
+}
+
+async function detectFilter(queryRaw) {
+  const query = normalizeQuery(queryRaw);
+  const family = detectFamily(query);
+  const duty = detectDuty(query, family);
+  const source = detectSource(query);
+  const sku = generateSku(family, query);
+
+  return {
+    query_norm: query,
+    sku,
+    family,
+    duty,
+    source,
+    homologated_sku: sku,
+    filter_type: family !== 'UNKNOWN' ? `${family} FILTER` : '',
+    description: `Filtro homologado tipo ${family} para aplicación ${duty === 'HD' ? 'Heavy Duty' : 'Light Duty'}`,
+  };
+}
+
+module.exports = { detectFilter };
