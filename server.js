@@ -4,8 +4,7 @@ const express = require('express');
 const cors = require('cors');
 const detectionService = require('./detectionService');
 
-// CORRECCIÓN CLAVE: Asegura que el nombre del archivo de servicio sea 'GoogleSheetsService.js'
-// para evitar el error 'Cannot find module' debido a la sensibilidad a mayúsculas/minúsculas.
+// CORRECCIÓN DE MÓDULO: Busca el archivo con mayúsculas (G y S)
 const GoogleSheetsService = require('./GoogleSheetsService'); 
 
 const app = express();
@@ -70,7 +69,7 @@ app.post('/api/detect-filter', async (req, res) => {
     console.log('⚙️  Generando nuevo registro para:', query);
     const generatedData = await detectionService.detectFilter(query);
 
-    // Paso 3: guardar en Google Sheets (Usando el método correcto 'replaceOrInsertRow')
+    // Paso 3: guardar en Google Sheets (Usando el método correcto)
     if (sheetsInstance && generatedData) {
       await sheetsInstance.replaceOrInsertRow(generatedData);
     }
