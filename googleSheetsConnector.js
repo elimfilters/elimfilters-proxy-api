@@ -1,5 +1,6 @@
 // =========================================
-// ELIMFILTERS Google Sheets Connector v4.0.0
+// ELIMFILTERS Google Sheets Connector v4.1.0
+// Compatible 100% con estructura Master inamovible
 // =========================================
 
 const { google } = require('googleapis');
@@ -9,10 +10,9 @@ class GoogleSheetsService {
     this.auth = null;
     this.sheets = null;
     this.sheetId = process.env.GOOGLE_SHEET_ID || process.env.GOOGLE_SHEETS_ID;
-    this.range = 'Master!A:Z';
+    this.range = 'Master!A:AJ'; // columnas hasta "description"
   }
 
-  // === Inicializar conexión con Google ===
   async initialize() {
     try {
       if (!process.env.GOOGLE_CREDENTIALS) {
@@ -26,17 +26,17 @@ class GoogleSheetsService {
       });
 
       this.sheets = google.sheets({ version: 'v4', auth: await this.auth.getClient() });
-      console.log('✅ Google Sheets listo');
+      console.log('✅ Google Sheets conectado (estructura Master protegida)');
     } catch (err) {
       console.error('❌ Error al inicializar Google Sheets:', err.message);
       throw err;
     }
   }
 
-  // === Buscar producto por código ===
+  // === Buscar producto existente ===
   async findProduct(query) {
     try {
-      console.log(`🔎 Buscando en hoja Master: ${query}`);
+      console.log(`🔎 Buscando ${query} en Master...`);
       const res = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.sheetId,
         range: this.range,
@@ -45,7 +45,7 @@ class GoogleSheetsService {
       const rows = res.data.values;
       if (!rows || rows.length < 2) return null;
 
-      const headers = rows[0].map(h => h.toLowerCase());
+      const headers = rows[0].map(h => h.trim().toLowerCase());
       const dataRows = rows.slice(1);
 
       for (const row of dataRows) {
@@ -53,43 +53,46 @@ class GoogleSheetsService {
         headers.forEach((h, i) => record[h] = row[i] || '');
 
         const candidates = [
+          record['query_norm'],
           record['sku'],
-          record['oem codes'],
-          record['cross references'],
+          record['oem_codes'],
+          record['cross_reference']
         ].filter(Boolean).map(v => v.toUpperCase());
 
-        if (candidates.some(v => v.includes(query))) {
-          console.log(`✅ Registro encontrado: ${record['sku']}`);
+        if (candidates.some(v => v.includes(query.toUpperCase()))) {
+          console.log(`✅ Registro encontrado en Master: ${record['sku']}`);
           return record;
         }
       }
 
-      console.log(`⚠️ No se encontró el código ${query} en la hoja Master`);
+      console.log(`⚠️ No existe ${query} en Master`);
       return null;
     } catch (error) {
-      console.error('❌ Error buscando producto:', error.message);
+      console.error('❌ Error en findProduct:', error.message);
       throw error;
     }
   }
 
-  // === Agregar producto nuevo ===
+  // === Insertar nuevo SKU ===
   async addProduct(result) {
     try {
-      const {
-        query, family, duty, source,
-        homologated_sku, final_sku
-      } = result;
+      console.log(`📝 Agregando nuevo SKU ${result.final_sku} a Master...`);
 
+      const now = new Date().toISOString();
       const newRow = [
-        final_sku,
-        family,
-        duty,
-        source,
-        query,
-        homologated_sku,
-        '', '', '', '', // Reservado para OEM Codes, Cross, Engine, Equipment
-        '', '', '', '', // Especificaciones
-        new Date().toISOString()
+        result.query || '',              // query_norm
+        result.final_sku || '',          // sku
+        result.family || '',             // family
+        result.duty || '',               // duty
+        '',                              // oem_codes
+        '',                              // cross_reference
+        '', '', '',                      // filter_type, media_type, subtype
+        '', '',                          // engine_applications, equipment_applications
+        '', '', '', '', '', '', '', '', '', '', '', '', '', '', // specs vacíos
+        '', '', '', '', '', '', '', '', '', '', '', '',         // hasta weight_grams
+        'AUTO-GENERATED',                // category
+        '',                              // name
+        `Generated automatically ${now}` // description
       ];
 
       await this.sheets.spreadsheets.values.append({
@@ -99,7 +102,7 @@ class GoogleSheetsService {
         resource: { values: [newRow] },
       });
 
-      console.log(`🟢 Nuevo SKU agregado a hoja Master: ${final_sku}`);
+      console.log(`✅ Nuevo SKU insertado: ${result.final_sku}`);
     } catch (error) {
       console.error('❌ Error agregando producto:', error.message);
       throw error;
