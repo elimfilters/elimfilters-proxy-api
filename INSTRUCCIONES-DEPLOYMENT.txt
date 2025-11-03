@@ -1,0 +1,101 @@
+═══════════════════════════════════════════════════════════════
+  ELIMFILTERS PROXY API v3.1.2 - DEPLOYMENT CORREGIDO
+═══════════════════════════════════════════════════════════════
+
+✅ PROBLEMAS CORREGIDOS:
+- Estructura de carpetas corregida (config/ y utils/)
+- REGLAS_MAESTRAS.json movido a config/
+- normalizeQuery.js movido a utils/
+- dataAccess.js con función queryMasterDatabase
+- Todos los archivos en lugares correctos
+
+📦 ARCHIVOS INCLUIDOS: 19 archivos + 2 carpetas
+
+📁 ESTRUCTURA:
+elimfilters-proxy-api/
+├── config/
+│   └── REGLAS_MAESTRAS.json
+├── utils/
+│   └── normalizeQuery.js
+├── businessLogic.js
+├── dataAccess.js
+├── detectionService.js
+├── filterProcessor.js
+├── googleSheetsConnector.js
+├── homologationDB.js
+├── jsonBuilder.js
+├── rulesProtection.js
+├── security.js
+├── server.js
+├── utils.js
+├── package.json
+├── railway.json
+├── Dockerfile
+├── .env.example
+├── .gitignore
+├── INSTRUCCIONES.txt
+└── README.md
+
+═══════════════════════════════════════════════════════════════
+  PASOS PARA DEPLOYMENT
+═══════════════════════════════════════════════════════════════
+
+1. DESCOMPRIMIR ZIP
+   - Extraer elimfilters-proxy-v3.0.0-FIXED-FINAL.zip
+   - Verás carpeta "fixed-proxy" con todos los archivos
+
+2. SUBIR A GITHUB
+   - Ir a: https://github.com/elimfilters/elimfilters-proxy-api
+   - Eliminar TODOS los archivos actuales
+   - Subir TODOS los archivos de fixed-proxy/
+   - Commit: "Fix v3.1.2 - estructura corregida"
+
+3. RAILWAY AUTO-DEPLOYA
+   - Esperar 2-3 minutos
+   - Railway detecta cambios y redeploya automático
+
+4. VERIFICAR LOGS
+   - Railway → Deployments → Ver logs
+   - Debe mostrar: "✅ ELIMFILTERS Proxy API v3.1.2"
+   - Sin errores de "Cannot find module"
+
+5. PROBAR ENDPOINTS
+
+PowerShell:
+$url = "https://elimfilters-proxy-api-production.up.railway.app/health"
+Invoke-RestMethod -Uri $url -Method GET
+
+$baseUrl = "https://elimfilters-proxy-api-production.up.railway.app"
+$body = @{ code = "P552100" } | ConvertTo-Json
+Invoke-RestMethod -Uri "$baseUrl/api/detect-filter" -Method POST -Body $body -ContentType "application/json"
+
+═══════════════════════════════════════════════════════════════
+  VARIABLES DE ENTORNO (Ya configuradas)
+═══════════════════════════════════════════════════════════════
+
+✅ GOOGLE_CREDENTIALS - Ya está en Railway
+✅ GOOGLE_SHEETS_ID - Ya está en Railway
+✅ PORT=3000 - Ya está en Railway
+
+No necesitas tocar las variables.
+
+═══════════════════════════════════════════════════════════════
+  RESULTADO ESPERADO
+═══════════════════════════════════════════════════════════════
+
+/health:
+{
+  "status": "ok",
+  "version": "3.1.2",
+  "service": "ELIMFILTERS Proxy API"
+}
+
+/api/detect-filter:
+{
+  "status": "OK",
+  "sku": "EL82100",
+  "family": "OIL",
+  "duty": "HD"
+}
+
+═══════════════════════════════════════════════════════════════
