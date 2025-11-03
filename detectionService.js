@@ -1,71 +1,93 @@
-// =========================================
-// ELIMFILTERS Detection Logic v4.0.0
-// =========================================
+const detectionService = {
+  detectFilter: async (query) => {
+    const result = {
+      query_norm: query,
+      sku: '',
+      family: 'UNKNOWN',
+      duty: 'UNKNOWN',
+      filter_type: '',
+      description: '',
+      oem_codes: '',
+      cross_reference: '',
+      media_type: '',
+      subtype: '',
+      engine_applications: '',
+      equipment_applications: '',
+      height_mm: '',
+      outer_diameter_mm: '',
+      thread_size: '',
+      gasket_od_mm: '',
+      gasket_id_mm: '',
+      bypass_valve_psi: '',
+      micron_rating: '',
+      iso_main_efficiency_percent: '',
+      iso_test_method: '',
+      beta_200: '',
+      hydrostatic_burst_psi: '',
+      dirt_capacity_grams: '',
+      rated_flow_cfm: '',
+      rated_flow_gpm: '',
+      panel_width_mm: '',
+      panel_depth_mm: '',
+      manufacturing_standards: 'ISO 9001, TS16949',
+      certification_standards: 'OEM Spec Equivalent',
+      operating_pressure_min_psi: '',
+      operating_pressure_max_psi: '',
+      operating_temperature_min_c: '',
+      operating_temperature_max_c: '',
+      fluid_compatibility: '',
+      disposal_method: 'Standard recycling procedure',
+      weight_grams: '',
+      category: '',
+      name: '',
+      description_full: ''
+    };
 
-function detectFilter(query) {
-  const q = query.trim().toUpperCase();
-  console.log(`🔎 Analizando código: ${q}`);
+    const q = query.toUpperCase();
 
-  let family = 'UNKNOWN';
-  let duty = 'UNKNOWN';
-  let source = 'GENERIC';
-  let homologated_sku = 'EXX';
-  let final_sku = 'EXX0000';
+    // --- FAMILY DETECTION ---
+    if (/(AIR|CA|CF|RS|P1|EAF)/.test(q)) result.family = 'AIR';
+    else if (/(OIL|ACEITE|LUBE|1R|PH|LF|B|BT)/.test(q)) result.family = 'OIL';
+    else if (/(CABIN|A\/C|AC|CABINA)/.test(q)) result.family = 'CABIN';
+    else if (/(HYDRAULIC|HIDRAULICO|HF)/.test(q)) result.family = 'HYDRAULIC';
+    else if (/(COOLANT|REFRIGERANTE)/.test(q)) result.family = 'COOLANT';
+    else if (/(SEPARATOR|SEPARADOR|PS)/.test(q)) result.family = 'FUEL SEPARATOR';
+    else if (/(TURBINE|PARKER)/.test(q)) result.family = 'TURBINE SERIES';
+    else if (/(KIT|ENGINE)/.test(q)) result.family = 'ENGINE KIT';
 
-  // === 1️⃣ Detectar tipo de filtro (Family) ===
-  const rules = [
-    { keys: ["AIR", "AIRE", "CA", "CF", "RS", "P1", "EAF"], result: "AIR", prefix: "EA1" },
-    { keys: ["OIL", "ACEITE", "LUBE", "1R", "LF", "PH", "B ", "BT"], result: "OIL", prefix: "EL8" },
-    { keys: ["FUEL", "COMBUSTIBLE", "PS", "SEPARATOR", "SEPARADOR"], result: "FUEL SEPARATOR", prefix: "ES9" },
-    { keys: ["HYDRAULIC", "HIDRAULICO"], result: "HYDRAULIC", prefix: "EH6" },
-    { keys: ["COOLANT", "REFRIGERANTE"], result: "COOLANT", prefix: "EW7" },
-    { keys: ["CABIN", "CABINA", "A/C", "AC"], result: "CABIN", prefix: "EC1" },
-    { keys: ["DRYER", "SECANTE"], result: "AIR DRYER", prefix: "ED4" },
-    { keys: ["TURBINE", "PARKER"], result: "TURBINE", prefix: "ET9" },
-    { keys: ["CARCASA"], result: "CARCASA", prefix: "EA2" },
-    { keys: ["KIT", "ENGINE", "MOTOR"], result: "KIT", prefix: "EK5" }
-  ];
+    // --- DUTY DETECTION ---
+    const dieselMakers = /(CATERPILLAR|MACK|KOMATSU|VOLVO|JOHN\s*DEERE|DETROIT|CUMMINS)/;
+    const gasolineMakers = /(TOYOTA|FORD|MAZDA|LEXUS|NISSAN|BMW|MERCEDES|HONDA|CHEVROLET)/;
+    if (dieselMakers.test(q)) result.duty = 'HD';
+    else if (gasolineMakers.test(q)) result.duty = 'LD';
 
-  for (const rule of rules) {
-    if (rule.keys.some(k => q.includes(k))) {
-      family = rule.result;
-      homologated_sku = rule.prefix;
-      break;
-    }
+    // --- PREFIX MAPPING ---
+    const prefixMap = {
+      AIR: 'EA1', OIL: 'EL8', CABIN: 'EC1', HYDRAULIC: 'EH6',
+      COOLANT: 'EW7', 'FUEL SEPARATOR': 'ES9', 'TURBINE SERIES': 'ET9',
+      'ENGINE KIT': 'EK5'
+    };
+
+    const prefix = prefixMap[result.family] || 'EXX';
+    const numeric = q.match(/(\d{4})$/);
+    const last4 = numeric ? numeric[1] : '0000';
+    result.sku = `${prefix}${last4}`;
+
+    // --- NEUTRAL DESCRIPTION ---
+    const descByFamily = {
+      AIR: 'High-efficiency air filter for heavy-duty applications.',
+      OIL: 'Lubrication filter for engine protection and performance.',
+      CABIN: 'Cabin air filter for occupant comfort and air quality.',
+      HYDRAULIC: 'Hydraulic system filter for contamination control.',
+      COOLANT: 'Coolant filter for maintaining optimal fluid conditions.',
+      'FUEL SEPARATOR': 'Fuel-water separation filter for diesel systems.',
+      'TURBINE SERIES': 'High-flow turbine filter for heavy-duty systems.',
+      'ENGINE KIT': 'Filter kit for internal combustion engines.'
+    };
+    result.description = descByFamily[result.family] || 'General-purpose filtration element.';
+
+    return result;
   }
+};
 
-  // === 2️⃣ Determinar Duty (HD o LD) ===
-  const hdMakers = ["CATERPILLAR", "CAT", "KOMATSU", "VOLVO", "MACK", "CUMMINS", "JOHN DEERE", "PERKINS"];
-  const ldMakers = ["TOYOTA", "FORD", "NISSAN", "HONDA", "LEXUS", "BMW", "MERCEDES", "MAZDA"];
-
-  if (hdMakers.some(m => q.includes(m))) duty = "HD";
-  else if (ldMakers.some(m => q.includes(m))) duty = "LD";
-
-  // === 3️⃣ Verificar fabricantes homologados ===
-  if (q.startsWith("P") || q.includes("DONALDSON")) {
-    source = "DONALDSON";
-  } else if (q.startsWith("PH") || q.includes("FRAM")) {
-    source = "FRAM";
-  } else {
-    source = "OEM";
-  }
-
-  // === 4️⃣ Asignar últimos 4 dígitos ===
-  const numbers = q.replace(/\D/g, "");
-  const last4 = numbers.slice(-4) || "0000";
-  final_sku = `${homologated_sku}${last4}`;
-
-  console.log(`✅ Resultado: ${q} → ${final_sku}`);
-
-  return {
-    status: "OK",
-    query: q,
-    family,
-    duty,
-    source,
-    homologated_sku,
-    final_sku
-  };
-}
-
-module.exports = { detectFilter };
+module.exports = detectionService;
