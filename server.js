@@ -3,10 +3,9 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const detectionService = require('./detectionService');
-// 
-// 🚨 CORRECCIÓN: Se cambió './googleSheetsService' a './GoogleSheetsService'
-// para coincidir con la convención de nombres de clase y la sensibilidad 
-// a mayúsculas/minúsculas del sistema de archivos.
+
+// CORRECCIÓN CLAVE: Asegura que el nombre del archivo de servicio sea 'GoogleSheetsService.js'
+// para evitar el error 'Cannot find module' debido a la sensibilidad a mayúsculas/minúsculas.
 const GoogleSheetsService = require('./GoogleSheetsService'); 
 
 const app = express();
@@ -53,7 +52,7 @@ app.post('/api/detect-filter', async (req, res) => {
   }
 
   try {
-    // Paso 1: buscar si ya existe en la hoja
+    // Paso 1: buscar si ya existe en la hoja maestra
     const existingRow = sheetsInstance
       ? await sheetsInstance.findRowByQuery(query)
       : null;
@@ -71,9 +70,7 @@ app.post('/api/detect-filter', async (req, res) => {
     console.log('⚙️  Generando nuevo registro para:', query);
     const generatedData = await detectionService.detectFilter(query);
 
-    // Paso 3: guardar en Google Sheets
-    // Nota: La función en tu clase es replaceOrInsertRow, no appendRow.
-    // He corregido la llamada a la función para usar la función correcta.
+    // Paso 3: guardar en Google Sheets (Usando el método correcto 'replaceOrInsertRow')
     if (sheetsInstance && generatedData) {
       await sheetsInstance.replaceOrInsertRow(generatedData);
     }
