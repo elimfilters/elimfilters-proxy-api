@@ -1,6 +1,6 @@
 /**
- * ELIMFILTERS Google Sheets Connector v3.3.2
- * Gestiona búsqueda, inserción y actualización en la hoja Master
+ * ELIMFILTERS Google Sheets Connector v3.3.4
+ * Versión con validación condicional de campos técnicos según tipo de filtro.
  */
 
 const { google } = require('googleapis');
@@ -27,29 +27,16 @@ class GoogleSheetsService {
     }
   }
 
-  /**
-   * Busca una fila por código de filtro o SKU
-   */
   async findRowByQuery(query) {
     try {
-      const range = 'Master!A2:AJ'; // Ajusta si tu hoja tiene más columnas
+      const range = 'Master!A2:AJ';
       const res = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.sheetId,
         range,
       });
 
       const rows = res.data.values || [];
-      const headers = [
-        'query_norm', 'sku', 'family', 'duty', 'oem_codes', 'cross_reference',
-        'filter_type', 'media_type', 'subtype', 'engine_applications', 'equipment_applications',
-        'height_mm', 'outer_diameter_mm', 'thread_size', 'gasket_od_mm', 'gasket_id_mm',
-        'bypass_valve_psi', 'micron_rating', 'iso_main_efficiency_percent', 'iso_test_method',
-        'beta_200', 'hydrostatic_burst_psi', 'dirt_capacity_grams', 'rated_flow_cfm',
-        'rated_flow_gpm', 'panel_width_mm', 'panel_depth_mm', 'manufacturing_standards',
-        'certification_standards', 'operating_pressure_min_psi', 'operating_pressure_max_psi',
-        'operating_temperature_min_c', 'operating_temperature_max_c', 'fluid_compatibility',
-        'disposal_method', 'weight_grams', 'category', 'name', 'description'
-      ];
+      const headers = this.getHeaders();
 
       for (const row of rows) {
         const rowObj = {};
@@ -73,26 +60,9 @@ class GoogleSheetsService {
   }
 
   /**
-   * Añade una nueva fila a la hoja Master
+   * Inserta o reemplaza una fila completa validando campos según tipo de filtro.
    */
-  async appendRow(rowArray) {
-    try {
-      await this.sheets.spreadsheets.values.append({
-        spreadsheetId: this.sheetId,
-        range: 'Master!A2',
-        valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [rowArray] },
-      });
-      console.log('✅ Nueva fila añadida a la hoja Master.');
-    } catch (err) {
-      console.error('❌ Error al añadir fila a Sheets:', err.message);
-    }
-  }
-
-  /**
-   * Actualiza una fila incompleta si ya existe pero tiene datos vacíos
-   */
-  async updateRowIfIncomplete(query, updatedData) {
+  async replaceOrInsertRow(data) {
     try {
       const range = 'Master!A2:AJ';
       const res = await this.sheets.spreadsheets.values.get({
@@ -100,44 +70,90 @@ class GoogleSheetsService {
         range,
       });
 
+      const headers = this.getHeaders();
+      const validated = this.validateByFilterType(data);
+
+      const rowArray = headers.map((key) => validated[key] || '');
+
       const rows = res.data.values || [];
-      const headers = [
-        'query_norm', 'sku', 'family', 'duty', 'oem_codes', 'cross_reference',
-        'filter_type', 'media_type', 'subtype', 'engine_applications', 'equipment_applications',
-        'height_mm', 'outer_diameter_mm', 'thread_size', 'gasket_od_mm', 'gasket_id_mm',
-        'bypass_valve_psi', 'micron_rating', 'iso_main_efficiency_percent', 'iso_test_method',
-        'beta_200', 'hydrostatic_burst_psi', 'dirt_capacity_grams', 'rated_flow_cfm',
-        'rated_flow_gpm', 'panel_width_mm', 'panel_depth_mm', 'manufacturing_standards',
-        'certification_standards', 'operating_pressure_min_psi', 'operating_pressure_max_psi',
-        'operating_temperature_min_c', 'operating_temperature_max_c', 'fluid_compatibility',
-        'disposal_method', 'weight_grams', 'category', 'name', 'description'
-      ];
+      let rowIndex = -1;
 
       for (let i = 0; i < rows.length; i++) {
-        const row = rows[i];
-        if (row[0].toUpperCase() === query || row[1].toUpperCase() === query) {
-          let updatedRow = [...row];
-          headers.forEach((header, idx) => {
-            if (!updatedRow[idx] && updatedData[header]) {
-              updatedRow[idx] = updatedData[header];
-            }
-          });
-
-          const rangeToUpdate = `Master!A${i + 2}:AJ${i + 2}`;
-          await this.sheets.spreadsheets.values.update({
-            spreadsheetId: this.sheetId,
-            range: rangeToUpdate,
-            valueInputOption: 'USER_ENTERED',
-            requestBody: { values: [updatedRow] },
-          });
-
-          console.log(`🟡 Fila existente actualizada: ${query}`);
-          return;
+        if (
+          rows[i][0]?.toUpperCase() === data.query_norm?.toUpperCase() ||
+          rows[i][1]?.toUpperCase() === data.sku?.toUpperCase()
+        ) {
+          rowIndex = i + 2;
+          break;
         }
       }
+
+      if (rowIndex > 0) {
+        const rangeToUpdate = `Master!A${rowIndex}:AJ${rowIndex}`;
+        await this.sheets.spreadsheets.values.update({
+          spreadsheetId: this.sheetId,
+          range: rangeToUpdate,
+          valueInputOption: 'USER_ENTERED',
+          requestBody: { values: [rowArray] },
+        });
+        console.log(`🟡 Fila reemplazada correctamente: ${data.query_norm}`);
+      } else {
+        await this.sheets.spreadsheets.values.append({
+          spreadsheetId: this.sheetId,
+          range: 'Master!A2',
+          valueInputOption: 'USER_ENTERED',
+          requestBody: { values: [rowArray] },
+        });
+        console.log(`🟢 Nueva fila añadida: ${data.query_norm}`);
+      }
     } catch (err) {
-      console.error('❌ Error al actualizar fila:', err.message);
+      console.error('❌ Error en replaceOrInsertRow:', err.message);
     }
+  }
+
+  /**
+   * Define las cabeceras fijas
+   */
+  getHeaders() {
+    return [
+      'query_norm','sku','family','duty','oem_codes','cross_reference','filter_type','media_type','subtype',
+      'engine_applications','equipment_applications','height_mm','outer_diameter_mm','thread_size',
+      'gasket_od_mm','gasket_id_mm','bypass_valve_psi','micron_rating','iso_main_efficiency_percent',
+      'iso_test_method','beta_200','hydrostatic_burst_psi','dirt_capacity_grams','rated_flow_cfm',
+      'rated_flow_gpm','panel_width_mm','panel_depth_mm','manufacturing_standards','certification_standards',
+      'operating_pressure_min_psi','operating_pressure_max_psi','operating_temperature_min_c',
+      'operating_temperature_max_c','fluid_compatibility','disposal_method','weight_grams','category','name','description'
+    ];
+  }
+
+  /**
+   * Valida los campos según el tipo de filtro
+   */
+  validateByFilterType(data) {
+    const allowed = { ...data };
+    const family = (data.family || '').toUpperCase();
+
+    const fieldsByType = {
+      AIR: ['height_mm','outer_diameter_mm','panel_width_mm','panel_depth_mm'],
+      OIL: ['height_mm','outer_diameter_mm','thread_size','micron_rating','bypass_valve_psi'],
+      HYDRAULIC: ['height_mm','outer_diameter_mm','thread_size','micron_rating','hydrostatic_burst_psi'],
+      CABIN: ['panel_width_mm','panel_depth_mm','height_mm'],
+      SEPARATOR: ['height_mm','outer_diameter_mm','rated_flow_gpm','rated_flow_cfm'],
+      TURBINE: ['height_mm','outer_diameter_mm','rated_flow_gpm','rated_flow_cfm'],
+    };
+
+    const validFields = fieldsByType[family] || [];
+    const allTechFields = [
+      'height_mm','outer_diameter_mm','thread_size','panel_width_mm','panel_depth_mm',
+      'micron_rating','bypass_valve_psi','hydrostatic_burst_psi','rated_flow_cfm','rated_flow_gpm'
+    ];
+
+    // Vacía los no aplicables
+    for (const key of allTechFields) {
+      if (!validFields.includes(key)) allowed[key] = '';
+    }
+
+    return allowed;
   }
 }
 
