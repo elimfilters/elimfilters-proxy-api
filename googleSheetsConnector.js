@@ -10,7 +10,6 @@ class GoogleSheetsService {
     this.sheetId = process.env.GOOGLE_SHEET_ID;
   }
 
-  // Inicializa conexión con Google Sheets
   async initialize() {
     const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
     const auth = new google.auth.GoogleAuth({
@@ -21,7 +20,7 @@ class GoogleSheetsService {
     console.log('✅ Conectado a Google Sheets:', this.sheetId);
   }
 
-  // Buscar fila por código OEM o SKU
+  // === BUSCA FILA EXISTENTE ===
   async findRowByQuery(query) {
     try {
       const res = await this.sheets.spreadsheets.values.get({
@@ -53,7 +52,7 @@ class GoogleSheetsService {
     }
   }
 
-  // Añadir nueva fila con datos generados
+  // === AGREGA NUEVA FILA ===
   async appendRow(data) {
     try {
       const row = [
