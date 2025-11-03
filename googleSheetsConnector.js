@@ -1,6 +1,7 @@
-// =========================================
-// googleSheetsConnector.js v4.1 — ELIMFILTERS
-// =========================================
+/**
+ * ELIMFILTERS Google Sheets Connector v3.3.2
+ * Gestiona búsqueda, inserción y actualización en la hoja Master
+ */
 
 const { google } = require('googleapis');
 
@@ -11,40 +12,59 @@ class GoogleSheetsService {
   }
 
   async initialize() {
-    const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
-    const auth = new google.auth.GoogleAuth({
-      credentials,
-      scopes: ['https://www.googleapis.com/auth/spreadsheets']
-    });
-    this.sheets = google.sheets({ version: 'v4', auth });
-    console.log('✅ Conectado a Google Sheets:', this.sheetId);
+    try {
+      const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
+      const auth = new google.auth.GoogleAuth({
+        credentials,
+        scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+      });
+      const client = await auth.getClient();
+      this.sheets = google.sheets({ version: 'v4', auth: client });
+      console.log('✅ Google Sheets conectado correctamente.');
+    } catch (err) {
+      console.error('❌ Error al inicializar Google Sheets:', err.message);
+      throw err;
+    }
   }
 
-  // === BUSCA FILA EXISTENTE ===
+  /**
+   * Busca una fila por código de filtro o SKU
+   */
   async findRowByQuery(query) {
     try {
+      const range = 'Master!A2:AJ'; // Ajusta si tu hoja tiene más columnas
       const res = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.sheetId,
-        range: 'Master!A2:AH'
+        range,
       });
 
       const rows = res.data.values || [];
-      const q = query.trim().toUpperCase();
+      const headers = [
+        'query_norm', 'sku', 'family', 'duty', 'oem_codes', 'cross_reference',
+        'filter_type', 'media_type', 'subtype', 'engine_applications', 'equipment_applications',
+        'height_mm', 'outer_diameter_mm', 'thread_size', 'gasket_od_mm', 'gasket_id_mm',
+        'bypass_valve_psi', 'micron_rating', 'iso_main_efficiency_percent', 'iso_test_method',
+        'beta_200', 'hydrostatic_burst_psi', 'dirt_capacity_grams', 'rated_flow_cfm',
+        'rated_flow_gpm', 'panel_width_mm', 'panel_depth_mm', 'manufacturing_standards',
+        'certification_standards', 'operating_pressure_min_psi', 'operating_pressure_max_psi',
+        'operating_temperature_min_c', 'operating_temperature_max_c', 'fluid_compatibility',
+        'disposal_method', 'weight_grams', 'category', 'name', 'description'
+      ];
 
       for (const row of rows) {
-        const rowData = row.map(v => (v ? v.toUpperCase() : ''));
-        if (rowData.includes(q)) {
-          const headersRes = await this.sheets.spreadsheets.values.get({
-            spreadsheetId: this.sheetId,
-            range: 'Master!A1:AH1'
-          });
-          const headers = headersRes.data.values[0];
-          const rowObj = {};
-          headers.forEach((h, i) => { rowObj[h] = row[i] || ''; });
+        const rowObj = {};
+        headers.forEach((h, i) => (rowObj[h] = row[i] || ''));
+
+        if (
+          rowObj.query_norm.toUpperCase() === query ||
+          rowObj.sku.toUpperCase() === query ||
+          (rowObj.oem_codes && rowObj.oem_codes.toUpperCase().includes(query)) ||
+          (rowObj.cross_reference && rowObj.cross_reference.toUpperCase().includes(query))
+        ) {
+          console.log(`✅ Coincidencia encontrada en Google Sheets: ${query}`);
           return rowObj;
         }
       }
-
       return null;
     } catch (err) {
       console.error('❌ Error en findRowByQuery:', err.message);
@@ -52,63 +72,71 @@ class GoogleSheetsService {
     }
   }
 
-  // === AGREGA NUEVA FILA ===
-  async appendRow(data) {
+  /**
+   * Añade una nueva fila a la hoja Master
+   */
+  async appendRow(rowArray) {
     try {
-      const row = [
-        data.query_norm || '',
-        data.final_sku || '',
-        data.family || '',
-        data.duty || '',
-        data.oem_codes || '',
-        data.cross_reference || '',
-        data.filter_type || '',
-        data.media_type || '',
-        data.subtype || '',
-        data.engine_applications || '',
-        data.equipment_applications || '',
-        data.height_mm || '',
-        data.outer_diameter_mm || '',
-        data.thread_size || '',
-        data.gasket_od_mm || '',
-        data.gasket_id_mm || '',
-        data.bypass_valve_psi || '',
-        data.micron_rating || '',
-        data.iso_main_efficiency_percent || '',
-        data.iso_test_method || '',
-        data.beta_200 || '',
-        data.hydrostatic_burst_psi || '',
-        data.dirt_capacity_grams || '',
-        data.rated_flow_cfm || '',
-        data.rated_flow_gpm || '',
-        data.panel_width_mm || '',
-        data.panel_depth_mm || '',
-        data.manufacturing_standards || '',
-        data.certification_standards || '',
-        data.operating_pressure_min_psi || '',
-        data.operating_pressure_max_psi || '',
-        data.operating_temperature_min_c || '',
-        data.operating_temperature_max_c || '',
-        data.fluid_compatibility || '',
-        data.disposal_method || '',
-        data.weight_grams || '',
-        data.category || '',
-        data.name || '',
-        data.description || ''
-      ];
-
       await this.sheets.spreadsheets.values.append({
         spreadsheetId: this.sheetId,
-        range: 'Master!A:AH',
-        valueInputOption: 'RAW',
-        requestBody: { values: [row] }
+        range: 'Master!A2',
+        valueInputOption: 'USER_ENTERED',
+        requestBody: { values: [rowArray] },
+      });
+      console.log('✅ Nueva fila añadida a la hoja Master.');
+    } catch (err) {
+      console.error('❌ Error al añadir fila a Sheets:', err.message);
+    }
+  }
+
+  /**
+   * Actualiza una fila incompleta si ya existe pero tiene datos vacíos
+   */
+  async updateRowIfIncomplete(query, updatedData) {
+    try {
+      const range = 'Master!A2:AJ';
+      const res = await this.sheets.spreadsheets.values.get({
+        spreadsheetId: this.sheetId,
+        range,
       });
 
-      console.log(`✅ Nuevo registro agregado: ${data.final_sku}`);
-      return true;
+      const rows = res.data.values || [];
+      const headers = [
+        'query_norm', 'sku', 'family', 'duty', 'oem_codes', 'cross_reference',
+        'filter_type', 'media_type', 'subtype', 'engine_applications', 'equipment_applications',
+        'height_mm', 'outer_diameter_mm', 'thread_size', 'gasket_od_mm', 'gasket_id_mm',
+        'bypass_valve_psi', 'micron_rating', 'iso_main_efficiency_percent', 'iso_test_method',
+        'beta_200', 'hydrostatic_burst_psi', 'dirt_capacity_grams', 'rated_flow_cfm',
+        'rated_flow_gpm', 'panel_width_mm', 'panel_depth_mm', 'manufacturing_standards',
+        'certification_standards', 'operating_pressure_min_psi', 'operating_pressure_max_psi',
+        'operating_temperature_min_c', 'operating_temperature_max_c', 'fluid_compatibility',
+        'disposal_method', 'weight_grams', 'category', 'name', 'description'
+      ];
+
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        if (row[0].toUpperCase() === query || row[1].toUpperCase() === query) {
+          let updatedRow = [...row];
+          headers.forEach((header, idx) => {
+            if (!updatedRow[idx] && updatedData[header]) {
+              updatedRow[idx] = updatedData[header];
+            }
+          });
+
+          const rangeToUpdate = `Master!A${i + 2}:AJ${i + 2}`;
+          await this.sheets.spreadsheets.values.update({
+            spreadsheetId: this.sheetId,
+            range: rangeToUpdate,
+            valueInputOption: 'USER_ENTERED',
+            requestBody: { values: [updatedRow] },
+          });
+
+          console.log(`🟡 Fila existente actualizada: ${query}`);
+          return;
+        }
+      }
     } catch (err) {
-      console.error('❌ Error al agregar fila:', err.message);
-      return false;
+      console.error('❌ Error al actualizar fila:', err.message);
     }
   }
 }
