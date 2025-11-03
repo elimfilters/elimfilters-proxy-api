@@ -1,29 +1,50 @@
+// =========================================
+// ELIMFILTERS Proxy API v4.0.0
 // server.js
-// ELIMFILTERS Proxy API v3.3.0
+// =========================================
 
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-const { detectFilter } = require('./detectionService');
+const GoogleSheetsService = require('./googleSheetsConnector');
+const detectionService = require('./detectionService');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
+// Seguridad y control
+app.use(helmet());
 app.use(cors());
 app.use(express.json());
-app.use(helmet());
-app.use(rateLimit({ windowMs: 60 * 1000, max: 100 }));
+app.use(rateLimit({
+  windowMs: 60 * 1000,
+  max: 100,
+  message: { status: 'ERROR', message: 'Too many requests' }
+}));
 
-// Health endpoint
+let sheetsInstance = null;
+
+// === Inicialización del Google Sheets ===
+async function initializeSheets() {
+  try {
+    sheetsInstance = new GoogleSheetsService();
+    await sheetsInstance.initialize();
+    console.log('✅ Google Sheets conectado correctamente');
+  } catch (err) {
+    console.error('❌ Error inicializando Google Sheets:', err.message);
+  }
+}
+initializeSheets();
+
+// === Health Check ===
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
     service: 'ELIMFILTERS Proxy API',
-    version: '3.3.0',
+    version: '4.0.0',
     endpoints: {
       health: 'GET /health',
       detect: 'POST /api/detect-filter'
@@ -31,26 +52,54 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Detect filter
+// === Endpoint principal ===
 app.post('/api/detect-filter', async (req, res) => {
+  const { query } = req.body;
+  if (!query || !query.trim()) {
+    return res.status(400).json({ status: 'ERROR', message: 'Query required' });
+  }
+
+  const code = query.trim().toUpperCase();
+  console.log(`🔍 Solicitud recibida: ${code}`);
+
   try {
-    const { query } = req.body;
-    if (!query) return res.status(400).json({ status: 'ERROR', message: 'Missing query' });
+    if (!sheetsInstance) {
+      return res.status(500).json({ status: 'ERROR', message: 'Sheets not initialized' });
+    }
 
-    const result = detectFilter(query);
-    return res.json(result);
+    // === 1️⃣ Buscar en hoja Master ===
+    const found = await sheetsInstance.findProduct(code);
+    if (found) {
+      console.log(`✅ Encontrado en hoja: ${found.sku}`);
+      return res.json({ status: 'OK', source: 'database', data: found });
+    }
 
-  } catch (err) {
-    console.error('Error in detect-filter:', err);
-    return res.status(500).json({
+    // === 2️⃣ No encontrado → ejecutar lógica ===
+    console.log('⚙️ No existe en hoja, ejecutando detección lógica...');
+    const result = await detectionService.detectFilter(code);
+
+    // === 3️⃣ Insertar nuevo registro ===
+    console.log(`📝 Insertando nuevo SKU en hoja: ${result.final_sku}`);
+    await sheetsInstance.addProduct(result);
+
+    // === 4️⃣ Devolver respuesta ===
+    res.json({
+      status: 'OK',
+      source: 'new_generated',
+      data: result
+    });
+
+  } catch (error) {
+    console.error('❌ Error general detect-filter:', error);
+    res.status(500).json({
       status: 'ERROR',
-      message: 'Internal failure in detect-filter',
-      details: err.message
+      message: 'Fallo interno en detect-filter',
+      details: error.message || null
     });
   }
 });
 
-// Start server
+// === Servidor activo ===
 app.listen(PORT, () => {
-  console.log(`✅ ELIMFILTERS Proxy API v3.3.0 running on port ${PORT}`);
+  console.log(`🚀 ELIMFILTERS Proxy API v4.0.0 corriendo en puerto ${PORT}`);
 });
