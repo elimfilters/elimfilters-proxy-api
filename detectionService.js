@@ -1,103 +1,37 @@
-// =========================================
-// detectionService.js v4.1 — ELIMFILTERS
-// =========================================
+/**
+ * Detecta familia, tipo de filtro y prefijo correcto según las reglas ELIMFILTERS
+ * @param {string} query Código o texto de entrada
+ * @returns {Object} { family, filter_type, prefix }
+ */
+function detectFamilyAndType(query) {
+  const q = (query || "").toUpperCase().trim();
 
-const detectionService = {
-  detectFilter(query) {
-    const q = query.trim().toUpperCase();
-    const result = {
-      status: "OK",
-      query_norm: q,
-      family: "UNKNOWN",
-      duty: "UNKNOWN",
-      source: "GENERIC",
-      homologated_sku: "EXX",
-      final_sku: ""
-    };
+  const rules = [
+    { family: "AIR", keywords: ["AIR", "AIRE", "CA", "CF", "RS", "P1", "EAF"], prefix: "EA1", duty: "AUTO" },
+    { family: "FUEL", keywords: ["FUEL", "COMBUSTIBLE", "FF", "FS"], prefix: "EF9", duty: "AUTO" },
+    { family: "OIL", keywords: ["OIL", "ACEITE", "1R", "PH", "LF", "B ", "BT"], prefix: "EL8", duty: "AUTO" },
+    { family: "CABIN", keywords: ["CABIN", "CABINA", "A/C", "AC"], prefix: "EC1", duty: "AUTO" },
+    { family: "HYDRAULIC", keywords: ["HYDRAULIC", "HIDRAULICO", "HF", "H "], prefix: "EH6", duty: "HD" },
+    { family: "COOLANT", keywords: ["COOLANT", "REFRIGERANTE"], prefix: "EW7", duty: "HD" },
+    { family: "SEPARATOR", keywords: ["SEPARATOR", "SEPARADOR", "PS"], prefix: "ES9", duty: "HD" },
+    { family: "AIR DRYER", keywords: ["AIR DRYER", "SECANTE", "BRAKE", "FRENO"], prefix: "ED4", duty: "HD" },
+    { family: "TURBINE", keywords: ["TURBINE", "PARKER", "TURBINA"], prefix: "ET9", duty: "HD" },
+    { family: "AIR HOUSING", keywords: ["CARCASA", "HOUSING", "AIR HOUSING"], prefix: "EA2", duty: "HD" },
+    { family: "KIT DIESEL ENGINE", keywords: ["KIT DIESEL", "MOTOR DIESEL"], prefix: "EK5", duty: "HD" },
+    { family: "KIT GASOLINE ENGINE", keywords: ["KIT GASOLINE", "MOTOR GASOLINA"], prefix: "EK3", duty: "LD" },
+  ];
 
-    // ===============================
-    // 1. FAMILY DETECTION (Tipo)
-    // ===============================
-    if (/(AIR|AIRE|CA|CF|RS|P1|EAF|P52|P527|P778|P777)/.test(q)) result.family = "AIR";
-    else if (/(OIL|ACEITE|LUBE|1R|PH|LF|B|BT)/.test(q)) result.family = "OIL";
-    else if (/(CABIN|A\/C|AC|CABINA)/.test(q)) result.family = "CABIN";
-    else if (/(HYDRAULIC|HIDRAULICO|HF)/.test(q)) result.family = "HYDRAULIC";
-    else if (/(COOLANT|REFRIGERANTE)/.test(q)) result.family = "COOLANT";
-    else if (/(SEPARATOR|SEPARADOR|PS)/.test(q)) result.family = "FUEL SEPARATOR";
-    else if (/(TURBINE|PARKER)/.test(q)) result.family = "TURBINE SERIES";
-    else if (/(KIT|ENGINE)/.test(q)) result.family = "ENGINE KIT";
-
-    // ===============================
-    // 2. DUTY (HD / LD)
-    // ===============================
-    const hdMakers = /(CATERPILLAR|KOMATSU|VOLVO|MACK|CUMMINS|DETROIT|JOHN ?DEERE|DONALDSON)/;
-    const ldMakers = /(TOYOTA|FORD|NISSAN|LEXUS|HONDA|MAZDA|BMW|MERCEDES|CHEVROLET)/;
-
-    if (hdMakers.test(q)) result.duty = "HD";
-    else if (ldMakers.test(q)) result.duty = "LD";
-    else if (/(1R|HF|P52|P77|P55|RS|CA)/.test(q)) result.duty = "HD";
-    else if (/(PH|CF|FRAM|ACDELCO|TOYOTA)/.test(q)) result.duty = "LD";
-
-    // ===============================
-    // 3. PREFIJO SEGÚN FAMILY
-    // ===============================
-    const prefixMap = {
-      AIR: "EA1",
-      FUEL: "EF9",
-      "FUEL SEPARATOR": "ES9",
-      OIL: "EL8",
-      CABIN: "EC1",
-      HYDRAULIC: "EH6",
-      COOLANT: "EW7",
-      "AIR DRYER": "ED4",
-      "TURBINE SERIES": "ET9",
-      "ENGINE KIT": "EK5"
-    };
-
-    const prefix = prefixMap[result.family] || "EXX";
-
-    // ===============================
-    // 4. HOMOLOGACIÓN (Donaldson / Fram)
-    // ===============================
-    if (result.duty === "HD") {
-      result.source = "DONALDSON";
-    } else if (result.duty === "LD") {
-      result.source = "FRAM";
+  for (const rule of rules) {
+    if (rule.keywords.some(k => q.includes(k))) {
+      return {
+        family: rule.family,
+        filter_type: `${rule.family} FILTER`,
+        prefix: rule.prefix,
+        duty: rule.duty
+      };
     }
-
-    // ===============================
-    // 5. CÓDIGO NUMÉRICO FINAL
-    // ===============================
-    const digits = q.replace(/\D/g, "");
-    const last4 = digits.slice(-4) || "0000";
-
-    // Si el código pertenece al propio Donaldson (P-series)
-    if (/^P\d{5,}/.test(q)) {
-      result.homologated_sku = q;
-      result.final_sku = prefix + last4;
-    } else {
-      result.homologated_sku = result.source;
-      result.final_sku = prefix + last4;
-    }
-
-    // ===============================
-    // 6. DESCRIPCIÓN BASE
-    // ===============================
-    const familyDesc = {
-      AIR: "High-efficiency air element for intake systems.",
-      OIL: "Precision oil filtration element for lubrication systems.",
-      CABIN: "Cabin air filter for interior air quality control.",
-      HYDRAULIC: "Hydraulic system filter for pressure and return circuits.",
-      COOLANT: "Coolant filter for thermal regulation systems.",
-      "FUEL SEPARATOR": "Fuel-water separator filter for diesel applications.",
-      "TURBINE SERIES": "Turbine-style high-performance separator filter.",
-      "ENGINE KIT": "Integrated filter kit for engine service operations."
-    };
-
-    result.description = familyDesc[result.family] || "General-purpose filtration component.";
-
-    return result;
   }
-};
 
-module.exports = detectionService;
+  // Si no hay coincidencia exacta
+  return { family: "UNKNOWN", filter_type: "UNDEFINED", prefix: "EXX", duty: "UNKNOWN" };
+}
