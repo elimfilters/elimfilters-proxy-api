@@ -1,83 +1,118 @@
-// detectionService.js
 const normalizeQuery = require('./utils/normalizeQuery');
 let sheetsInstance = null;
 
-/** Vincula la instancia de Google Sheets */
 function setSheetsInstance(instance) {
   sheetsInstance = instance;
-  console.log('✅ Google Sheets instance configurada en detectionService');
 }
 
-/** 
- * Detecta el filtro según la hoja o, si no existe, genera un registro nuevo
+/**
+ * Detecta tipo de filtro, duty, y genera SKU
  */
-async function detectFilter(query) {
-  if (!sheetsInstance) throw new Error('Google Sheets no inicializado');
+async function detectFilter(rawQuery) {
+  const query = normalizeQuery(rawQuery);
+  const response = { status: 'OK', query_norm: query };
 
-  const normalized = normalizeQuery(query);
-  console.log(`🔍 Procesando consulta: ${normalized}`);
-
-  try {
-    // Buscar en hoja Master
-    const row = await sheetsInstance.findRowByQuery(normalized);
-    if (row) {
-      console.log(`✅ Encontrado en hoja Master: ${normalized}`);
-      return { status: 'OK', source: 'Master', data: row };
+  // --- 1. Si está en Google Sheets ---
+  if (sheetsInstance && typeof sheetsInstance.findRowByQuery === 'function') {
+    const existingRow = await sheetsInstance.findRowByQuery(query);
+    if (existingRow) {
+      return { status: 'OK', source: 'Master', data: existingRow };
     }
-
-    // Si no está, generar base técnica
-    console.log('⚙️ No encontrado. Generando datos base...');
-    const generated = {
-      query_norm: normalized,
-      sku: '',
-      family: '',
-      duty: '',
-      oem_codes: '',
-      cross_reference: '',
-      filter_type: '',
-      media_type: '',
-      subtype: '',
-      engine_applications: '',
-      equipment_applications: '',
-      height_mm: '',
-      outer_diameter_mm: '',
-      thread_size: '',
-      gasket_od_mm: '',
-      gasket_id_mm: '',
-      bypass_valve_psi: '',
-      micron_rating: '',
-      iso_main_efficiency_percent: '',
-      iso_test_method: '',
-      beta_200: '',
-      hydrostatic_burst_psi: '',
-      dirt_capacity_grams: '',
-      rated_flow_cfm: '',
-      rated_flow_gpm: '',
-      panel_width_mm: '',
-      panel_depth_mm: '',
-      manufacturing_standards: '',
-      certification_standards: '',
-      operating_pressure_min_psi: '',
-      operating_pressure_max_psi: '',
-      operating_temperature_min_c: '',
-      operating_temperature_max_c: '',
-      fluid_compatibility: '',
-      disposal_method: '',
-      weight_grams: '',
-      category: '',
-      name: normalized,
-      description: 'Filtro técnico general. Datos pendientes de homologación.'
-    };
-
-    // Guardar nueva línea
-    await sheetsInstance.appendRow(generated);
-    console.log(`🆕 Agregado nuevo registro: ${normalized}`);
-
-    return { status: 'OK', source: 'Generated', data: generated };
-  } catch (err) {
-    console.error('❌ Error en detectFilter:', err);
-    return { status: 'ERROR', message: err.message };
   }
+
+  // --- 2. Detectar tipo de filtro ---
+  const ref = query.toUpperCase();
+  let family = 'UNKNOWN';
+  let duty = 'UNKNOWN';
+  let source = 'Generated';
+  let homologated_sku = 'EXX';
+  let final_sku = '';
+
+  // --- Clasificación Family ---
+  const patterns = {
+    AIR: ["AIR", "AIRE", "CA", "CF", "RS", "P1", "EAF"],
+    OIL: ["OIL", "ACEITE", "LUBE", "1R", "PH", "LF", "B", "BT"],
+    FUEL: ["FUEL", "COMBUSTIBLE", "GASOIL", "FS", "FF", "PS"],
+    HYDRAULIC: ["HYDRAULIC", "HIDRAULICO", "H"],
+    CABIN: ["CABIN", "AC", "A/C", "CABINA"],
+    SEPARATOR: ["SEPARATOR", "SEPARADOR"],
+    COOLANT: ["COOLANT", "REFRIGERANTE"],
+    AIR_DRYER: ["AIR DRYER", "SECANTE", "SECADOR"],
+    TURBINE: ["TURBINE", "PARKER TURBINE SERIES"],
+    HOUSING: ["CARCASA", "HOUSING"],
+    KIT: ["KIT"]
+  };
+
+  for (const [fam, keys] of Object.entries(patterns)) {
+    if (keys.some(k => ref.includes(k))) {
+      family = fam;
+      break;
+    }
+  }
+
+  // --- 3. Clasificar Duty por fabricante (motor) ---
+  const hdBrands = [
+    "CATERPILLAR", "KOMATSU", "CUMMINS", "VOLVO", "MACK", "JOHN DEERE", "DETROIT",
+    "PERKINS", "CASE", "NEW HOLLAND", "SCANIA", "MERCEDES TRUCK", "KENWORTH",
+    "PETERBILT", "FREIGHTLINER", "INTERNATIONAL", "MTU", "PACCAR", "HINO", "IVECO"
+  ];
+
+  const ldBrands = [
+    "TOYOTA", "FORD", "NISSAN", "HONDA", "BMW", "MERCEDES", "LEXUS", "MAZDA",
+    "SUZUKI", "HYUNDAI", "KIA", "CHEVROLET", "VOLKSWAGEN"
+  ];
+
+  if (hdBrands.some(b => ref.includes(b))) duty = 'HD';
+  else if (ldBrands.some(b => ref.includes(b))) duty = 'LD';
+
+  // --- 4. Prefijos de SKU ---
+  const prefixes = {
+    AIR: "EA1",
+    FUEL: "EF9",
+    OIL: "EL8",
+    CABIN: "EC1",
+    SEPARATOR: "ES9",
+    HYDRAULIC: "EH6",
+    COOLANT: "EW7",
+    AIR_DRYER: "ED4",
+    TURBINE: "ET9",
+    HOUSING: "EA2",
+    KIT: "EK5"
+  };
+
+  homologated_sku = prefixes[family] || "EXX";
+
+  // --- 5. Extraer los últimos 4 dígitos ---
+  const match = query.match(/(\d{4})$/);
+  const last4 = match ? match[1] : "0000";
+  final_sku = `${homologated_sku}${last4}`;
+
+  response.family = family;
+  response.duty = duty;
+  response.source = source;
+  response.homologated_sku = homologated_sku;
+  response.final_sku = final_sku;
+
+  // --- 6. Si existe instancia de Sheet, guardar ---
+  if (sheetsInstance && typeof sheetsInstance.appendRow === 'function') {
+    try {
+      await sheetsInstance.appendRow({
+        query_norm: query,
+        sku: final_sku,
+        family,
+        duty,
+        oem_codes: '',
+        cross_reference: '',
+        filter_type: '',
+        media_type: '',
+        description: 'General-purpose filter record.'
+      });
+    } catch (err) {
+      console.error('⚠️ Error guardando en Sheet:', err.message);
+    }
+  }
+
+  return { status: 'OK', source, data: response };
 }
 
-module.exports = { setSheetsInstance, detectFilter };
+module.exports = { detectFilter, setSheetsInstance };
