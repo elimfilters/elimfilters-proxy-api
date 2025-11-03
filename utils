@@ -1,0 +1,12 @@
+// utils/normalizeQuery.js v3.3.5 — estable
+function normalizeQuery(query) {
+  if (!query || typeof query !== 'string') return '';
+  return query
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9\s\-\/]/g, '')
+    .trim()
+    .toUpperCase();
+}
+
+module.exports = normalizeQuery;
