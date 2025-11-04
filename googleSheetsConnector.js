@@ -1,27 +1,39 @@
-// googleSheetsConnector.js v3.3.6 — Con lectura JSON directa y validación robusta
+// googleSheetsConnector.js v3.3.7 — Versión corregida
 const { google } = require('googleapis');
 
 class GoogleSheetsService {
   constructor() {
     this.sheets = null;
     this.auth = null;
-    this.spreadsheetId = process.env.GOOGLE_SHEET_ID;
+    this.spreadsheetId = process.env.GOOGLE_SHEETS_ID; // ✅ CORREGIDO: agregada 'S'
   }
 
   async initialize() {
     try {
+      // Validar que exista GOOGLE_CREDENTIALS
       const rawCredentials = process.env.GOOGLE_CREDENTIALS;
       if (!rawCredentials) {
         throw new Error('Variable GOOGLE_CREDENTIALS no encontrada');
       }
 
+      // Parsear JSON
       let credentials;
       try {
         credentials = JSON.parse(rawCredentials);
       } catch (err) {
-        throw new Error('"GOOGLE_CREDENTIALS" no contiene JSON válido');
+        throw new Error('GOOGLE_CREDENTIALS no contiene JSON válido');
       }
 
+      // ✅ VALIDAR que existan los campos necesarios
+      if (!credentials.client_email) {
+        throw new Error('GOOGLE_CREDENTIALS no tiene client_email');
+      }
+      
+      if (!credentials.private_key) {
+        throw new Error('GOOGLE_CREDENTIALS no tiene private_key');
+      }
+
+      // Crear autenticación
       this.auth = new google.auth.JWT({
         email: credentials.client_email,
         key: credentials.private_key.replace(/\\n/g, '\n'),
@@ -29,6 +41,7 @@ class GoogleSheetsService {
       });
 
       this.sheets = google.sheets({ version: 'v4', auth: this.auth });
+      
       console.log('✅ Conectado correctamente a Google Sheets');
     } catch (err) {
       console.error('❌ Error al inicializar Google Sheets:', err.message);
@@ -38,6 +51,7 @@ class GoogleSheetsService {
 
   async findRowByQuery(query) {
     if (!this.sheets || !this.spreadsheetId) return null;
+
     try {
       const range = 'Master!A:AZ';
       const res = await this.sheets.spreadsheets.values.get({
@@ -48,6 +62,7 @@ class GoogleSheetsService {
       const rows = res.data.values || [];
       const header = rows[0];
       const queryColIndex = header.findIndex(h => h.toLowerCase() === 'query_norm');
+
       if (queryColIndex === -1) return null;
 
       const row = rows.find((r, i) => i > 0 && r[queryColIndex] === query);
@@ -62,6 +77,7 @@ class GoogleSheetsService {
 
   async replaceOrInsertRow(rowData) {
     if (!this.sheets || !this.spreadsheetId) return;
+
     try {
       const range = 'Master!A:AZ';
       const res = await this.sheets.spreadsheets.values.get({
@@ -72,11 +88,13 @@ class GoogleSheetsService {
       const rows = res.data.values || [];
       const header = rows[0];
       const queryIndex = header.findIndex(h => h.toLowerCase() === 'query_norm');
+
       if (queryIndex === -1) throw new Error('Columna query_norm no encontrada');
 
       const existingIndex = rows.findIndex(
         (r, i) => i > 0 && r[queryIndex] === rowData.query_norm
       );
+
       const rowArray = header.map(h => rowData[h] || '');
 
       if (existingIndex !== -1) {
