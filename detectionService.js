@@ -1,6 +1,7 @@
-// detectionService.js v3.5.0 — Con cross-reference completo
+// detectionService.js v3.6.0 — Con búsqueda web automática
 const normalizeQuery = require('./utils/normalizeQuery');
 const { findEquivalence } = require('./crossReferenceDB');
+const { searchCrossReference } = require('./webSearchService');
 
 const OEM_MANUFACTURERS = [
   'CATERPILLAR', 'KOMATSU', 'CUMMINS', 'VOLVO', 'MACK', 'JOHN DEERE',
@@ -28,64 +29,31 @@ const FAMILY_RULES = {
   KIT_GASOLINE: { patterns: ['GASOLINE KIT', 'KIT GASOLINA'], prefix: 'EK3' },
 };
 
-/**
- * Detecta si el query YA ES un número de cross-reference (Donaldson, FRAM, etc.)
- */
 function isAlreadyCrossReference(query) {
   const q = query.toUpperCase().replace(/[-\s]/g, '');
   
-  // Patrones de Donaldson: P + 6 dígitos (P550596, P181050, etc.)
   if (/^P\d{6}/.test(q)) {
-    return { 
-      brand: 'DONALDSON', 
-      duty: 'HD',
-      partNumber: q 
-    };
+    return { brand: 'DONALDSON', duty: 'HD', partNumber: q };
   }
   
-  // Patrones de FRAM: PH, CA, CS, FS, CH, BG, G + dígitos
   if (/^(PH|CA|CS|FS|CH|BG|G)\d{4,}/.test(q)) {
-    return { 
-      brand: 'FRAM', 
-      duty: 'LD',
-      partNumber: q 
-    };
+    return { brand: 'FRAM', duty: 'LD', partNumber: q };
   }
   
-  // Patrones de FRAM: CF + dígitos (cabin filters)
   if (/^CF\d{5}/.test(q)) {
-    return { 
-      brand: 'FRAM', 
-      duty: 'LD',
-      partNumber: q 
-    };
+    return { brand: 'FRAM', duty: 'LD', partNumber: q };
   }
   
-  // Patrones de Fleetguard: LF, FF, AF, HF + dígitos
   if (/^(LF|FF|AF|HF)\d{4,}/.test(q)) {
-    return { 
-      brand: 'FLEETGUARD', 
-      duty: 'HD',
-      partNumber: q 
-    };
+    return { brand: 'FLEETGUARD', duty: 'HD', partNumber: q };
   }
   
-  // Patrones de Baldwin: B, BT, PA + dígitos
   if (/^(B|BT|PA)\d{3,}/.test(q)) {
-    return { 
-      brand: 'BALDWIN', 
-      duty: 'HD',
-      partNumber: q 
-    };
+    return { brand: 'BALDWIN', duty: 'HD', partNumber: q };
   }
   
-  // Patrones de Mann: CUK, CU + dígitos
   if (/^(CUK|CU)\d{4}/.test(q)) {
-    return { 
-      brand: 'MANN', 
-      duty: 'LD',
-      partNumber: q 
-    };
+    return { brand: 'MANN', duty: 'LD', partNumber: q };
   }
   
   return null;
@@ -102,7 +70,6 @@ function detectFamily(query) {
 function detectDuty(query, family) {
   const q = query.toUpperCase();
   
-  // Primero verificar si ya es un cross-reference
   const crossRef = isAlreadyCrossReference(q);
   if (crossRef) return crossRef.duty;
   
@@ -115,7 +82,6 @@ function detectDuty(query, family) {
 function detectSource(query) {
   const q = query.toUpperCase();
   
-  // Primero verificar si ya es un cross-reference
   const crossRef = isAlreadyCrossReference(q);
   if (crossRef) return crossRef.brand;
   
@@ -124,30 +90,22 @@ function detectSource(query) {
   return 'GENERIC';
 }
 
-/**
- * Extrae el número de parte más relevante del query
- */
 function extractPartNumber(query) {
-  // Buscar patrones como: 1R-0750, P550596, 600-185-4100, CUK 2450, etc.
   const patterns = [
-    /\b[A-Z]{1,3}[-\s]?\d{4,}\b/i,  // Ej: 1R-0750, P550596, PH3614, CUK 2450
-    /\b\d{3,}[-]?\d{3,}[-]?\d{3,}\b/,  // Ej: 600-185-4100
-    /\b[A-Z]{2}\d{4,}\b/i,  // Ej: LF3000, FF5320, HF6710
+    /\b[A-Z]{1,3}[-\s]?\d{4,}\b/i,
+    /\b\d{3,}[-]?\d{3,}[-]?\d{3,}\b/,
+    /\b[A-Z]{2}\d{4,}\b/i,
   ];
   
   for (const pattern of patterns) {
     const match = query.match(pattern);
-    if (match) return match[0].replace(/\s/g, ''); // Remover espacios
+    if (match) return match[0].replace(/\s/g, '');
   }
   
-  // Fallback: extraer cualquier combinación alfanumérica larga
   const fallback = query.match(/[A-Z0-9]{5,}/i);
   return fallback ? fallback[0] : query;
 }
 
-/**
- * Genera SKU usando los últimos 4 dígitos de un número de parte
- */
 function generateSkuFromPartNumber(family, partNumber) {
   const rule = FAMILY_RULES[family];
   if (!rule) return 'EXX0000';
@@ -158,18 +116,15 @@ function generateSkuFromPartNumber(family, partNumber) {
 }
 
 /**
- * Función principal de detección con lógica completa de cross-reference
+ * 🆕 Función principal con búsqueda web automática
  */
-async function detectFilter(queryRaw) {
+async function detectFilter(queryRaw, sheetsInstance = null, webSearchFunction = null) {
   const query = normalizeQuery(queryRaw);
   const family = detectFamily(query);
   const duty = detectDuty(query, family);
   const source = detectSource(query);
-  
-  // Extraer número de parte del query
   const partNumber = extractPartNumber(query);
   
-  // PASO 1: Verificar si YA ES un número de cross-reference directo
   const directCross = isAlreadyCrossReference(query);
   
   let sku;
@@ -179,27 +134,56 @@ async function detectFilter(queryRaw) {
   let oemNumber = partNumber;
   
   if (directCross) {
-    // ✅ Ya es Donaldson/FRAM/Fleetguard/etc. → Usar directamente
+    // Ya es cross-reference directo
     sku = generateSkuFromPartNumber(family, directCross.partNumber);
     usedPartNumber = directCross.partNumber;
     crossBrand = directCross.brand;
     crossPartNumber = directCross.partNumber;
-    oemNumber = 'N/A';  // No hay OEM, es directo cross-reference
+    oemNumber = 'N/A';
     console.log(`✅ Cross-reference directo: ${directCross.brand} ${directCross.partNumber} → SKU: ${sku}`);
   } else {
-    // PASO 2: Es un OEM, buscar equivalencia en base de datos
-    const equivalence = findEquivalence(partNumber, duty);
+    // Es OEM - buscar equivalencia
+    
+    // PASO 1: Buscar en DB local (crossReferenceDB.js)
+    let equivalence = findEquivalence(partNumber, duty);
+    
+    // PASO 2: Si no encuentra, buscar en Google Sheets
+    if (!equivalence && sheetsInstance) {
+      const sheetsCross = await sheetsInstance.findCrossReference(partNumber);
+      if (sheetsCross) {
+        const targetPart = duty === 'HD' ? sheetsCross.donaldson : sheetsCross.fram;
+        if (targetPart) {
+          equivalence = {
+            brand: duty === 'HD' ? 'DONALDSON' : 'FRAM',
+            partNumber: targetPart,
+            family: sheetsCross.family || family
+          };
+          console.log(`📗 Equivalencia encontrada en Google Sheets: ${equivalence.brand} ${equivalence.partNumber}`);
+        }
+      }
+    }
+    
+    // PASO 3: Si no encuentra, buscar en web
+    if (!equivalence && webSearchFunction) {
+      equivalence = await searchCrossReference(partNumber, duty, family, webSearchFunction);
+      
+      // Si encontró en web, guardar en Google Sheets
+      if (equivalence && sheetsInstance) {
+        const donaldsonPart = duty === 'HD' ? equivalence.partNumber : '';
+        const framPart = duty === 'LD' ? equivalence.partNumber : '';
+        await sheetsInstance.saveCrossReference(partNumber, donaldsonPart, framPart, family);
+      }
+    }
     
     if (equivalence) {
-      // ✅ Encontró equivalencia Donaldson (HD) o FRAM (LD)
       sku = generateSkuFromPartNumber(family, equivalence.partNumber);
       usedPartNumber = equivalence.partNumber;
       crossBrand = equivalence.brand;
       crossPartNumber = equivalence.partNumber;
       oemNumber = partNumber;
-      console.log(`✅ Cross-reference encontrado: OEM ${partNumber} → ${equivalence.brand} ${equivalence.partNumber} → SKU: ${sku}`);
+      console.log(`✅ Equivalencia confirmada: OEM ${partNumber} → ${equivalence.brand} ${equivalence.partNumber} → SKU: ${sku}`);
     } else {
-      // ❌ No encontró equivalencia → usar OEM más comercial
+      // No encontró equivalencia - usar OEM
       sku = generateSkuFromPartNumber(family, partNumber);
       usedPartNumber = partNumber;
       oemNumber = partNumber;
