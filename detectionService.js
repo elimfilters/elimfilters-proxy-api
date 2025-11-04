@@ -1,7 +1,6 @@
-// detectionService.js v3.6.0 — Con búsqueda web automática
+// detectionService.js v3.7.0 — FINAL sin web search
 const normalizeQuery = require('./utils/normalizeQuery');
 const { findEquivalence } = require('./crossReferenceDB');
-const { searchCrossReference } = require('./webSearchService');
 
 const OEM_MANUFACTURERS = [
   'CATERPILLAR', 'KOMATSU', 'CUMMINS', 'VOLVO', 'MACK', 'JOHN DEERE',
@@ -116,9 +115,9 @@ function generateSkuFromPartNumber(family, partNumber) {
 }
 
 /**
- * 🆕 Función principal con búsqueda web automática
+ * Función principal con búsqueda en 2 niveles
  */
-async function detectFilter(queryRaw, sheetsInstance = null, webSearchFunction = null) {
+async function detectFilter(queryRaw, sheetsInstance = null) {
   const query = normalizeQuery(queryRaw);
   const family = detectFamily(query);
   const duty = detectDuty(query, family);
@@ -144,10 +143,10 @@ async function detectFilter(queryRaw, sheetsInstance = null, webSearchFunction =
   } else {
     // Es OEM - buscar equivalencia
     
-    // PASO 1: Buscar en DB local (crossReferenceDB.js)
+    // NIVEL 1: Buscar en DB local (crossReferenceDB.js)
     let equivalence = findEquivalence(partNumber, duty);
     
-    // PASO 2: Si no encuentra, buscar en Google Sheets
+    // NIVEL 2: Si no encuentra, buscar en Google Sheets
     if (!equivalence && sheetsInstance) {
       const sheetsCross = await sheetsInstance.findCrossReference(partNumber);
       if (sheetsCross) {
@@ -160,18 +159,6 @@ async function detectFilter(queryRaw, sheetsInstance = null, webSearchFunction =
           };
           console.log(`📗 Equivalencia encontrada en Google Sheets: ${equivalence.brand} ${equivalence.partNumber}`);
         }
-      }
-    }
-    
-    // PASO 3: Si no encuentra, buscar en web
-    if (!equivalence && webSearchFunction) {
-      equivalence = await searchCrossReference(partNumber, duty, family, webSearchFunction);
-      
-      // Si encontró en web, guardar en Google Sheets
-      if (equivalence && sheetsInstance) {
-        const donaldsonPart = duty === 'HD' ? equivalence.partNumber : '';
-        const framPart = duty === 'LD' ? equivalence.partNumber : '';
-        await sheetsInstance.saveCrossReference(partNumber, donaldsonPart, framPart, family);
       }
     }
     
