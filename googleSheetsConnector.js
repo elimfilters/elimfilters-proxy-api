@@ -1,42 +1,31 @@
-// googleSheetsConnector.js v3.3.7 — Versión corregida
+// googleSheetsConnector.js v3.3.7 — Usando variables individuales
 const { google } = require('googleapis');
 
 class GoogleSheetsService {
   constructor() {
     this.sheets = null;
     this.auth = null;
-    this.spreadsheetId = process.env.GOOGLE_SHEETS_ID; // ✅ CORREGIDO: agregada 'S'
+    this.spreadsheetId = process.env.GOOGLE_SHEETS_ID;
   }
 
   async initialize() {
     try {
-      // Validar que exista GOOGLE_CREDENTIALS
-      const rawCredentials = process.env.GOOGLE_CREDENTIALS;
-      if (!rawCredentials) {
-        throw new Error('Variable GOOGLE_CREDENTIALS no encontrada');
-      }
+      // ✅ Usar variables individuales que ya tienes en Railway
+      const privateKey = process.env.GOOGLE_PRIVATE_KEY;
+      const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
 
-      // Parsear JSON
-      let credentials;
-      try {
-        credentials = JSON.parse(rawCredentials);
-      } catch (err) {
-        throw new Error('GOOGLE_CREDENTIALS no contiene JSON válido');
-      }
-
-      // ✅ VALIDAR que existan los campos necesarios
-      if (!credentials.client_email) {
-        throw new Error('GOOGLE_CREDENTIALS no tiene client_email');
+      if (!privateKey) {
+        throw new Error('Variable GOOGLE_PRIVATE_KEY no encontrada');
       }
       
-      if (!credentials.private_key) {
-        throw new Error('GOOGLE_CREDENTIALS no tiene private_key');
+      if (!clientEmail) {
+        throw new Error('Variable GOOGLE_SERVICE_ACCOUNT_EMAIL no encontrada');
       }
 
       // Crear autenticación
       this.auth = new google.auth.JWT({
-        email: credentials.client_email,
-        key: credentials.private_key.replace(/\\n/g, '\n'),
+        email: clientEmail,
+        key: privateKey.replace(/\\n/g, '\n'),
         scopes: ['https://www.googleapis.com/auth/spreadsheets'],
       });
 
