@@ -159,8 +159,3 @@ app.listen(PORT, () => {
   console.log(`🌐 CORS habilitado para: ${process.env.WORDPRESS_URL || 'Todos los orígenes'}`);
   console.log(`🔐 Admin endpoint: ${process.env.ADMIN_KEY ? 'Protegido ✅' : '⚠️ SIN PROTECCIÓN'}`);
 });
-
-/*
----
-
-## 📋 **Checklist de archivos finales:**
