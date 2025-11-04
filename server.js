@@ -1,4 +1,4 @@
-// server.js v3.7.0 — Optimizado para WordPress
+// server.js v3.7.0 — FINAL optimizado para WordPress
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -10,7 +10,7 @@ const PORT = process.env.PORT || 8080;
 
 // CORS configurado para WordPress
 app.use(cors({
-  origin: process.env.WORDPRESS_URL || '*', // Configura tu URL de WordPress
+  origin: process.env.WORDPRESS_URL || '*',
   methods: ['GET', 'POST'],
   credentials: true
 }));
@@ -105,11 +105,11 @@ app.post('/api/detect-filter', async (req, res) => {
   }
 });
 
-// ---------- 🆕 Endpoint de Admin (para agregar equivalencias) ----------
+// ---------- Endpoint de Admin (para agregar equivalencias) ----------
 app.post('/api/admin/add-equivalence', async (req, res) => {
   const { oem_number, donaldson, fram, family, admin_key } = req.body || {};
   
-  // Validar clave de admin (seguridad básica)
+  // Validar clave de admin
   if (admin_key !== process.env.ADMIN_KEY) {
     return res.status(403).json({
       status: 'ERROR',
@@ -156,6 +156,22 @@ app.use((req, res) => {
 // ---------- Iniciar Servidor ----------
 app.listen(PORT, () => {
   console.log(`🚀 Servidor ejecutándose en puerto ${PORT}`);
-  console.log(`🌐 WordPress URL: ${process.env.WORDPRESS_URL || 'No configurada'}`);
-  console.log(`🔐 Admin endpoint: ${process.env.ADMIN_KEY ? 'Protegido' : 'SIN PROTECCIÓN'}`);
+  console.log(`🌐 CORS habilitado para: ${process.env.WORDPRESS_URL || 'Todos los orígenes'}`);
+  console.log(`🔐 Admin endpoint: ${process.env.ADMIN_KEY ? 'Protegido ✅' : '⚠️ SIN PROTECCIÓN'}`);
 });
+```
+
+---
+
+## 📋 **Checklist de archivos finales:**
+```
+/tu-proyecto
+├── server.js                    ✅ (v3.7.0 FINAL)
+├── detectionService.js          ✅ (v3.7.0 FINAL)
+├── crossReferenceDB.js          ✅ (mantener)
+├── googleSheetsConnector.js     ✅ (v3.6.0 con CrossReference)
+├── utils/
+│   └── normalizeQuery.js        ✅ (mantener)
+├── package.json                 ✅ (sin axios)
+├── .env                         ✅ (configurar)
+└── webSearchService.js          ❌ ELIMINAR
