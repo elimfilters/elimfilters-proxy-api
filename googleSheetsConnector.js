@@ -1,4 +1,4 @@
-// googleSheetsConnector.js v3.3.7 — Usando variables individuales
+// googleSheetsConnector.js v3.6.0 — Con soporte para hoja CrossReference
 const { google } = require('googleapis');
 
 class GoogleSheetsService {
@@ -10,7 +10,6 @@ class GoogleSheetsService {
 
   async initialize() {
     try {
-      // ✅ Usar variables individuales que ya tienes en Railway
       const privateKey = process.env.GOOGLE_PRIVATE_KEY;
       const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
 
@@ -22,7 +21,6 @@ class GoogleSheetsService {
         throw new Error('Variable GOOGLE_SERVICE_ACCOUNT_EMAIL no encontrada');
       }
 
-      // Crear autenticación
       this.auth = new google.auth.JWT({
         email: clientEmail,
         key: privateKey.replace(/\\n/g, '\n'),
@@ -106,6 +104,84 @@ class GoogleSheetsService {
       }
     } catch (err) {
       console.error('❌ Error insertando/actualizando fila:', err.message);
+    }
+  }
+
+  // 🆕 NUEVO: Buscar equivalencia en hoja CrossReference
+  async findCrossReference(oemNumber) {
+    if (!this.sheets || !this.spreadsheetId) return null;
+
+    try {
+      const range = 'CrossReference!A:E';
+      const res = await this.sheets.spreadsheets.values.get({
+        spreadsheetId: this.spreadsheetId,
+        range,
+      });
+
+      const rows = res.data.values || [];
+      if (rows.length === 0) return null;
+
+      const header = rows[0];
+      const oemIndex = header.findIndex(h => h.toLowerCase().includes('oem'));
+      const donaldsonIndex = header.findIndex(h => h.toLowerCase().includes('donaldson'));
+      const framIndex = header.findIndex(h => h.toLowerCase().includes('fram'));
+      const familyIndex = header.findIndex(h => h.toLowerCase().includes('family'));
+
+      if (oemIndex === -1) return null;
+
+      const normalized = oemNumber.toUpperCase().replace(/[-\s]/g, '');
+      
+      const matchRow = rows.find((r, i) => 
+        i > 0 && r[oemIndex]?.toUpperCase().replace(/[-\s]/g, '') === normalized
+      );
+
+      if (!matchRow) return null;
+
+      return {
+        oem: matchRow[oemIndex] || '',
+        donaldson: matchRow[donaldsonIndex] || '',
+        fram: matchRow[framIndex] || '',
+        family: matchRow[familyIndex] || ''
+      };
+    } catch (err) {
+      console.error('⚠️ Error buscando en CrossReference:', err.message);
+      return null;
+    }
+  }
+
+  // 🆕 NUEVO: Guardar equivalencia en hoja CrossReference
+  async saveCrossReference(oemNumber, donaldson, fram, family) {
+    if (!this.sheets || !this.spreadsheetId) return;
+
+    try {
+      const range = 'CrossReference!A:E';
+      
+      // Verificar si ya existe
+      const existing = await this.findCrossReference(oemNumber);
+      if (existing) {
+        console.log(`ℹ️ Equivalencia ya existe en CrossReference: ${oemNumber}`);
+        return;
+      }
+
+      // Agregar nueva fila
+      const newRow = [
+        oemNumber,
+        donaldson || '',
+        fram || '',
+        family || '',
+        new Date().toISOString()
+      ];
+
+      await this.sheets.spreadsheets.values.append({
+        spreadsheetId: this.spreadsheetId,
+        range,
+        valueInputOption: 'RAW',
+        requestBody: { values: [newRow] },
+      });
+
+      console.log(`💾 Equivalencia guardada en CrossReference: ${oemNumber} → ${donaldson || fram}`);
+    } catch (err) {
+      console.error('❌ Error guardando en CrossReference:', err.message);
     }
   }
 }
