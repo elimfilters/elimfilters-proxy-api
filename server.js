@@ -1,4 +1,4 @@
-// server.js v3.6.0 — Con búsqueda web automática integrada
+// server.js v3.7.0 — Optimizado para WordPress
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -8,7 +8,13 @@ const GoogleSheetsService = require('./googleSheetsConnector');
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-app.use(cors());
+// CORS configurado para WordPress
+app.use(cors({
+  origin: process.env.WORDPRESS_URL || '*', // Configura tu URL de WordPress
+  methods: ['GET', 'POST'],
+  credentials: true
+}));
+
 app.use(express.json());
 
 // ---------- Inicialización Google Sheets ----------
@@ -23,46 +29,28 @@ let sheetsInstance;
   }
 })();
 
-// ---------- Función de Web Search (simulada para Claude) ----------
-async function webSearch(query) {
-  // Esta función será llamada por detectionService
-  // En el entorno real, aquí usarías tu herramienta web_search
-  // Por ahora, devolvemos null para que no falle
-  
-  // TODO: Integrar con tu API de web search real
-  console.log(`🌐 Web search solicitada para: ${query}`);
-  
-  try {
-    // Aquí iría tu llamada a web_search real
-    // const results = await yourWebSearchAPI(query);
-    // return results;
-    return null; // Temporal
-  } catch (error) {
-    console.error('Error en web search:', error.message);
-    return null;
-  }
-}
-
 // ---------- Endpoint de Salud ----------
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
     service: 'ELIMFILTERS Proxy API',
-    version: '3.6.0',
+    version: '3.7.0',
     features: {
-      web_search: 'enabled',
       google_sheets: sheetsInstance ? 'connected' : 'disconnected',
-      cross_reference_db: 'active'
+      cross_reference_db: 'active',
+      wordpress_ready: true
     },
     endpoints: {
       health: 'GET /health',
       detect: 'POST /api/detect-filter',
+      admin: 'POST /api/admin/add-equivalence'
     },
   });
 });
 
-// ---------- Endpoint Principal ----------
+// ---------- Endpoint Principal (para WordPress) ----------
 app.post('/api/detect-filter', async (req, res) => {
+  const startTime = Date.now();
   const { query } = req.body || {};
   
   if (!query || typeof query !== 'string') {
@@ -79,37 +67,82 @@ app.post('/api/detect-filter', async (req, res) => {
       : null;
     
     if (existingRow) {
-      console.log(`📗 Encontrado en hoja Master: ${query}`);
+      const responseTime = Date.now() - startTime;
+      console.log(`📗 Cache hit - Master: ${query} (${responseTime}ms)`);
       return res.json({
         status: 'OK',
-        source: 'Master',
+        source: 'cache',
+        response_time_ms: responseTime,
         data: existingRow,
       });
     }
 
-    // Paso 2: Generar nuevo registro (con búsqueda web si es necesario)
-    console.log(`⚙️ Generando nuevo registro para: ${query}`);
-    const generatedData = await detectionService.detectFilter(
-      query, 
-      sheetsInstance,
-      webSearch  // Pasar función de web search
-    );
+    // Paso 2: Generar nuevo registro
+    console.log(`⚙️ Generando SKU para: ${query}`);
+    const generatedData = await detectionService.detectFilter(query, sheetsInstance);
 
-    // Paso 3: Insertar o actualizar en Google Sheets
+    // Paso 3: Guardar en cache
     if (sheetsInstance && generatedData) {
       await sheetsInstance.replaceOrInsertRow(generatedData);
     }
 
+    const responseTime = Date.now() - startTime;
+    console.log(`✅ SKU generado: ${generatedData.sku} (${responseTime}ms)`);
+
     res.json({
       status: 'OK',
-      source: 'Generated',
+      source: 'generated',
+      response_time_ms: responseTime,
       data: generatedData,
     });
   } catch (error) {
     console.error('❌ Error en /api/detect-filter:', error.message);
     res.status(500).json({
       status: 'ERROR',
-      message: 'Fallo interno en detect-filter',
+      message: 'Error interno del servidor',
+      details: error.message,
+    });
+  }
+});
+
+// ---------- 🆕 Endpoint de Admin (para agregar equivalencias) ----------
+app.post('/api/admin/add-equivalence', async (req, res) => {
+  const { oem_number, donaldson, fram, family, admin_key } = req.body || {};
+  
+  // Validar clave de admin (seguridad básica)
+  if (admin_key !== process.env.ADMIN_KEY) {
+    return res.status(403).json({
+      status: 'ERROR',
+      message: 'Clave de administrador inválida',
+    });
+  }
+
+  if (!oem_number || !family) {
+    return res.status(400).json({
+      status: 'ERROR',
+      message: 'Faltan parámetros: oem_number y family son requeridos',
+    });
+  }
+
+  try {
+    if (sheetsInstance) {
+      await sheetsInstance.saveCrossReference(oem_number, donaldson, fram, family);
+      res.json({
+        status: 'OK',
+        message: 'Equivalencia agregada exitosamente',
+        data: { oem_number, donaldson, fram, family }
+      });
+    } else {
+      res.status(503).json({
+        status: 'ERROR',
+        message: 'Google Sheets no disponible',
+      });
+    }
+  } catch (error) {
+    console.error('❌ Error agregando equivalencia:', error.message);
+    res.status(500).json({
+      status: 'ERROR',
+      message: 'Error al agregar equivalencia',
       details: error.message,
     });
   }
@@ -123,38 +156,6 @@ app.use((req, res) => {
 // ---------- Iniciar Servidor ----------
 app.listen(PORT, () => {
   console.log(`🚀 Servidor ejecutándose en puerto ${PORT}`);
-  console.log(`📡 Web Search: ${webSearch ? 'Habilitado' : 'Deshabilitado'}`);
+  console.log(`🌐 WordPress URL: ${process.env.WORDPRESS_URL || 'No configurada'}`);
+  console.log(`🔐 Admin endpoint: ${process.env.ADMIN_KEY ? 'Protegido' : 'SIN PROTECCIÓN'}`);
 });
-```
-
----
-
-## 📊 **Estructura final de archivos:**
-```
-/tu-proyecto
-├── server.js                    ✅ (v3.6.0 - con web search)
-├── detectionService.js          ✅ (v3.6.0 - con 3 niveles de búsqueda)
-├── crossReferenceDB.js          ✅ (v1.0.0 - DB local)
-├── webSearchService.js          🆕 (v1.0.0 - NUEVO)
-├── googleSheetsConnector.js     ✅ (v3.6.0 - con CrossReference)
-├── utils/
-│   └── normalizeQuery.js
-├── package.json
-└── .env
-```
-
----
-
-## 🎯 **Cómo funciona ahora (3 niveles):**
-```
-Query: "PERKINS 26560201 FUEL"
-
-NIVEL 1: ❌ No está en crossReferenceDB.js
-NIVEL 2: ❌ No está en Google Sheets "CrossReference"
-NIVEL 3: 🔍 Buscar en web...
-         → Encuentra: "Donaldson P551329"
-         → 💾 Guarda en Google Sheets
-         → ✅ Genera SKU: EF91329
-
-Próxima vez que busquen "PERKINS 26560201":
-NIVEL 2: ✅ Encuentra en Google Sheets (instantáneo)
