@@ -1,10 +1,8 @@
-// server.js v3.3.6 — Versión estable
+// server.js v3.5.0 — Versión completa con cross-reference
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const detectionService = require('./detectionService');
-
-// ✅ Nombre de módulo correcto
 const GoogleSheetsService = require('./googleSheetsConnector');
 
 const app = express();
@@ -15,7 +13,6 @@ app.use(express.json());
 
 // ---------- Inicialización Google Sheets ----------
 let sheetsInstance;
-
 (async () => {
   try {
     sheetsInstance = new GoogleSheetsService();
@@ -31,7 +28,7 @@ app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
     service: 'ELIMFILTERS Proxy API',
-    version: '3.3.6',
+    version: '3.5.0',
     endpoints: {
       health: 'GET /health',
       detect: 'POST /api/detect-filter',
@@ -42,7 +39,7 @@ app.get('/health', (req, res) => {
 // ---------- Endpoint Principal ----------
 app.post('/api/detect-filter', async (req, res) => {
   const { query } = req.body || {};
-
+  
   if (!query || typeof query !== 'string') {
     return res.status(400).json({
       status: 'ERROR',
@@ -55,7 +52,7 @@ app.post('/api/detect-filter', async (req, res) => {
     const existingRow = sheetsInstance
       ? await sheetsInstance.findRowByQuery(query)
       : null;
-
+    
     if (existingRow) {
       console.log(`📗 Encontrado en hoja Master: ${query}`);
       return res.json({
