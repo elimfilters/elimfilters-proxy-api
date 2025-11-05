@@ -1,4 +1,4 @@
-// server.js v3.7.1 — CORS actualizado para con y sin www
+// server.js v3.8.1 — Estable y listo para WordPress y Google Sheets
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -8,30 +8,35 @@ const GoogleSheetsService = require('./googleSheetsConnector');
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// CORS configurado para WordPress (con y sin www)
+// -------- Configuración de CORS --------
 const allowedOrigins = [
+  'https://elimfilters.com',
   'https://www.elimfilters.com',
-  'https://elimfilters.com'
+  'https://elimfilterscross.app.n8n.cloud',
+  'http://localhost:3000'
 ];
 
 app.use(cors({
-  origin: function(origin, callback) {
-    // Permitir requests sin origin (como Postman, curl, etc.)
-    if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.indexOf(origin) !== -1) {
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
+      console.warn(`❌ Bloqueado por CORS: ${origin}`);
       callback(new Error('Not allowed by CORS'));
     }
   },
-  methods: ['GET', 'POST'],
-  credentials: true
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+  optionsSuccessStatus: 200
 }));
+
+// Permitir preflight manualmente
+app.options('*', cors());
 
 app.use(express.json());
 
-// ---------- Inicialización Google Sheets ----------
+// -------- Inicialización de Google Sheets --------
 let sheetsInstance;
 (async () => {
   try {
@@ -43,30 +48,28 @@ let sheetsInstance;
   }
 })();
 
-// ---------- Endpoint de Salud ----------
+// -------- Endpoint de salud --------
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
     service: 'ELIMFILTERS Proxy API',
-    version: '3.7.1',
+    version: '3.8.1',
     features: {
       google_sheets: sheetsInstance ? 'connected' : 'disconnected',
-      cross_reference_db: 'active',
-      wordpress_ready: true
+      wordpress_ready: true,
     },
     endpoints: {
-      health: 'GET /health',
       detect: 'POST /api/detect-filter',
-      admin: 'POST /api/admin/add-equivalence'
+      admin: 'POST /api/admin/add-equivalence',
     },
   });
 });
 
-// ---------- Endpoint Principal (para WordPress) ----------
+// -------- Endpoint principal --------
 app.post('/api/detect-filter', async (req, res) => {
   const startTime = Date.now();
   const { query } = req.body || {};
-  
+
   if (!query || typeof query !== 'string') {
     return res.status(400).json({
       status: 'ERROR',
@@ -75,14 +78,14 @@ app.post('/api/detect-filter', async (req, res) => {
   }
 
   try {
-    // Paso 1: Buscar en hoja "Master"
+    // Buscar en hoja “Master”
     const existingRow = sheetsInstance
       ? await sheetsInstance.findRowByQuery(query)
       : null;
-    
+
     if (existingRow) {
       const responseTime = Date.now() - startTime;
-      console.log(`📗 Cache hit - Master: ${query} (${responseTime}ms)`);
+      console.log(`📗 Cache hit: ${query} (${responseTime}ms)`);
       return res.json({
         status: 'OK',
         source: 'cache',
@@ -91,75 +94,84 @@ app.post('/api/detect-filter', async (req, res) => {
       });
     }
 
-    // Paso 2: Generar nuevo registro
-    console.log(`🔍 Procesando nuevo query: "${query}"`);
-    const detectionResult = await detectionService.processFilterQuery(query);
-    
-    if (!detectionResult || !detectionResult.sku) {
-      return res.status(404).json({
-        status: 'ERROR',
-        message: 'No se pudo detectar el filtro. Query no reconocido.'
-      });
-    }
+    // Generar nuevo registro
+    console.log(`⚙️ Generando SKU para: ${query}`);
+    const generatedData = await detectionService.detectFilter(query, sheetsInstance);
 
-    // Paso 3: Guardar en "Master" si Google Sheets está disponible
-    if (sheetsInstance) {
-      try {
-        await sheetsInstance.appendRow(detectionResult);
-        console.log(`✍️  Nuevo registro guardado en Master: ${detectionResult.sku}`);
-      } catch (sheetErr) {
-        console.warn(`⚠️  No se pudo guardar en Master (continuando): ${sheetErr.message}`);
-      }
+    // Guardar en cache
+    if (sheetsInstance && generatedData) {
+      await sheetsInstance.replaceOrInsertRow(generatedData);
     }
 
     const responseTime = Date.now() - startTime;
-    console.log(`✅ Procesado: ${detectionResult.sku} (${responseTime}ms)`);
-    
-    return res.json({
+    console.log(`✅ SKU generado: ${generatedData.sku} (${responseTime}ms)`);
+
+    res.json({
       status: 'OK',
       source: 'generated',
       response_time_ms: responseTime,
-      data: detectionResult
+      data: generatedData,
     });
-  } catch (err) {
-    console.error(`❌ Error en /api/detect-filter: ${err.message}`);
-    return res.status(500).json({
+  } catch (error) {
+    console.error('❌ Error en /api/detect-filter:', error.message);
+    res.status(500).json({
       status: 'ERROR',
       message: 'Error interno del servidor',
-      error: err.message
+      details: error.message,
     });
   }
 });
 
-// ---------- Endpoint de Administración ----------
-app.post('/api/admin/add-equivalence', (req, res) => {
-  const { adminKey, elimSKU, competitorBrand, competitorSKU } = req.body || {};
-  
-  if (adminKey !== process.env.ADMIN_KEY) {
+// -------- Endpoint admin --------
+app.post('/api/admin/add-equivalence', async (req, res) => {
+  const { oem_number, donaldson, fram, family, admin_key } = req.body || {};
+
+  if (admin_key !== process.env.ADMIN_KEY) {
     return res.status(403).json({
       status: 'ERROR',
-      message: 'Forbidden: Invalid admin key'
+      message: 'Clave de administrador inválida',
     });
   }
 
-  if (!elimSKU || !competitorBrand || !competitorSKU) {
+  if (!oem_number || !family) {
     return res.status(400).json({
       status: 'ERROR',
-      message: 'Missing required fields: elimSKU, competitorBrand, competitorSKU'
+      message: 'Faltan parámetros requeridos: oem_number y family',
     });
   }
 
-  // Aquí iría la lógica para agregar la equivalencia
-  // Por ahora solo retornamos OK
-  res.json({
-    status: 'OK',
-    message: `Equivalence added: ${competitorBrand} ${competitorSKU} -> ${elimSKU}`
-  });
+  try {
+    if (sheetsInstance) {
+      await sheetsInstance.saveCrossReference(oem_number, donaldson, fram, family);
+      res.json({
+        status: 'OK',
+        message: 'Equivalencia agregada exitosamente',
+        data: { oem_number, donaldson, fram, family },
+      });
+    } else {
+      res.status(503).json({
+        status: 'ERROR',
+        message: 'Google Sheets no disponible',
+      });
+    }
+  } catch (error) {
+    console.error('❌ Error agregando equivalencia:', error.message);
+    res.status(500).json({
+      status: 'ERROR',
+      message: 'Error al agregar equivalencia',
+      details: error.message,
+    });
+  }
 });
 
-// ---------- Iniciar Servidor ----------
-app.listen(PORT, '0.0.0.0', () => {
+// -------- Rutas no encontradas --------
+app.use((req, res) => {
+  res.status(404).json({ status: 'ERROR', message: 'Ruta no encontrada' });
+});
+
+// -------- Iniciar servidor --------
+app.listen(PORT, () => {
   console.log(`🚀 Servidor ejecutándose en puerto ${PORT}`);
-  console.log(`🌐 CORS habilitado para: https://www.elimfilters.com y https://elimfilters.com`);
-  console.log(`🔐 Admin endpoint: Protegido ✅`);
+  console.log(`🌐 CORS habilitado para: ${allowedOrigins.join(', ')}`);
+  console.log(`🔐 Admin endpoint: ${process.env.ADMIN_KEY ? 'Protegido ✅' : '⚠️ SIN PROTECCIÓN'}`);
 });
