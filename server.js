@@ -1,40 +1,37 @@
-// server.js v3.7.2 — CORS mejorado con preflight handling
+// server.js v3.7.3 — CORS con headers manuales
 require('dotenv').config();
 const express = require('express');
-const cors = require('cors');
 const detectionService = require('./detectionService');
 const GoogleSheetsService = require('./googleSheetsConnector');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// CORS configurado para WordPress (con y sin www) - Versión mejorada
+// Lista de orígenes permitidos
 const allowedOrigins = [
   'https://www.elimfilters.com',
   'https://elimfilters.com'
 ];
 
-const corsOptions = {
-  origin: function(origin, callback) {
-    // Permitir requests sin origin (como Postman, curl, etc.)
-    if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true,
-  optionsSuccessStatus: 200
-};
-
-app.use(cors(corsOptions));
-
-// Manejar preflight requests explícitamente
-app.options('*', cors(corsOptions));
+// ========== MIDDLEWARE CORS MANUAL (ANTES DE TODO) ==========
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  
+  // Si el origen está permitido, agregamos los headers
+  if (allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  }
+  
+  // Si es una petición OPTIONS (preflight), responder inmediatamente
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  
+  next();
+});
 
 app.use(express.json());
 
@@ -55,7 +52,7 @@ app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
     service: 'ELIMFILTERS Proxy API',
-    version: '3.7.2',
+    version: '3.7.3',
     features: {
       google_sheets: sheetsInstance ? 'connected' : 'disconnected',
       cross_reference_db: 'active',
@@ -167,6 +164,6 @@ app.post('/api/admin/add-equivalence', (req, res) => {
 // ---------- Iniciar Servidor ----------
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Servidor ejecutándose en puerto ${PORT}`);
-  console.log(`🌐 CORS habilitado para: https://www.elimfilters.com y https://elimfilters.com`);
+  console.log(`🌐 CORS manual habilitado para: ${allowedOrigins.join(', ')}`);
   console.log(`🔐 Admin endpoint: Protegido ✅`);
 });
