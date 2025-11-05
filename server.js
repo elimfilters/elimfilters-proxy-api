@@ -1,26 +1,31 @@
-// server.js v3.8.0 — Final estable con soporte HTTPS GoDaddy + CORS y 0.0.0.0
+// server.js v3.8.1 — Final estable con soporte HTTPS GoDaddy + CORS doble dominio y 0.0.0.0
 require('dotenv').config();
 const express = require('express');
-const cors = require('cors');
 const detectionService = require('./detectionService');
 const GoogleSheetsService = require('./googleSheetsConnector');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// ---------- CORS Config ----------
-app.use(cors({
-  origin: [
-    'https://elimfilters.com',
-    'https://www.elimfilters.com',
-    process.env.WORDPRESS_URL || '*'
-  ],
-  methods: ['GET', 'POST'],
-  credentials: true,
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
+// ---------- Configuración de CORS segura ----------
+const allowedOrigins = [
+  'https://elimfilters.com',
+  'https://www.elimfilters.com'
+];
 
-// Middleware JSON
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (allowedOrigins.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+  }
+  res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  if (req.method === 'OPTIONS') return res.sendStatus(200);
+  next();
+});
+
+// ---------- Middleware JSON ----------
 app.use(express.json());
 
 // ---------- Inicialización Google Sheets ----------
@@ -40,7 +45,7 @@ app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
     service: 'ELIMFILTERS Proxy API',
-    version: '3.8.0',
+    version: '3.8.1',
     features: {
       google_sheets: sheetsInstance ? 'connected' : 'disconnected',
       cross_reference_db: 'active',
@@ -50,7 +55,7 @@ app.get('/health', (req, res) => {
       health: 'GET /health',
       detect: 'POST /api/detect-filter',
       admin: 'POST /api/admin/add-equivalence'
-    },
+    }
   });
 });
 
@@ -62,12 +67,11 @@ app.post('/api/detect-filter', async (req, res) => {
   if (!query || typeof query !== 'string') {
     return res.status(400).json({
       status: 'ERROR',
-      message: 'Falta parámetro "query" válido en el cuerpo de la solicitud',
+      message: 'Falta parámetro "query" válido en el cuerpo de la solicitud'
     });
   }
 
   try {
-    // Paso 1: Buscar en cache (hoja Master)
     const existingRow = sheetsInstance
       ? await sheetsInstance.findRowByQuery(query)
       : null;
@@ -79,15 +83,13 @@ app.post('/api/detect-filter', async (req, res) => {
         status: 'OK',
         source: 'cache',
         response_time_ms: responseTime,
-        data: existingRow,
+        data: existingRow
       });
     }
 
-    // Paso 2: Generar nuevo registro
     console.log(`⚙️ Generando SKU para: ${query}`);
     const generatedData = await detectionService.detectFilter(query, sheetsInstance);
 
-    // Paso 3: Guardar en cache
     if (sheetsInstance && generatedData) {
       await sheetsInstance.replaceOrInsertRow(generatedData);
     }
@@ -99,14 +101,14 @@ app.post('/api/detect-filter', async (req, res) => {
       status: 'OK',
       source: 'generated',
       response_time_ms: responseTime,
-      data: generatedData,
+      data: generatedData
     });
   } catch (error) {
     console.error('❌ Error en /api/detect-filter:', error.message);
     res.status(500).json({
       status: 'ERROR',
       message: 'Error interno del servidor',
-      details: error.message,
+      details: error.message
     });
   }
 });
@@ -118,14 +120,14 @@ app.post('/api/admin/add-equivalence', async (req, res) => {
   if (admin_key !== process.env.ADMIN_KEY) {
     return res.status(403).json({
       status: 'ERROR',
-      message: 'Clave de administrador inválida',
+      message: 'Clave de administrador inválida'
     });
   }
 
   if (!oem_number || !family) {
     return res.status(400).json({
       status: 'ERROR',
-      message: 'Faltan parámetros: oem_number y family son requeridos',
+      message: 'Faltan parámetros: oem_number y family son requeridos'
     });
   }
 
@@ -140,7 +142,7 @@ app.post('/api/admin/add-equivalence', async (req, res) => {
     } else {
       res.status(503).json({
         status: 'ERROR',
-        message: 'Google Sheets no disponible',
+        message: 'Google Sheets no disponible'
       });
     }
   } catch (error) {
@@ -148,7 +150,7 @@ app.post('/api/admin/add-equivalence', async (req, res) => {
     res.status(500).json({
       status: 'ERROR',
       message: 'Error al agregar equivalencia',
-      details: error.message,
+      details: error.message
     });
   }
 });
@@ -161,6 +163,6 @@ app.use((req, res) => {
 // ---------- Iniciar Servidor ----------
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Servidor ejecutándose en puerto ${PORT} en 0.0.0.0`);
-  console.log(`🌐 CORS habilitado para: ${process.env.WORDPRESS_URL || 'Todos los orígenes'}`);
+  console.log('🌐 CORS habilitado para: https://elimfilters.com y https://www.elimfilters.com');
   console.log(`🔐 Admin endpoint: ${process.env.ADMIN_KEY ? 'Protegido ✅' : '⚠️ SIN PROTECCIÓN'}`);
 });
