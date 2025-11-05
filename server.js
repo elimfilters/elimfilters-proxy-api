@@ -1,4 +1,4 @@
-// server.js v3.8.1 — Estable y compatible con GoDaddy HTTPS
+// server.js v3.8.0 — Final estable con soporte HTTPS GoDaddy + CORS y 0.0.0.0
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -8,25 +8,19 @@ const GoogleSheetsService = require('./googleSheetsConnector');
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// ---------- CORS CONFIG (GoDaddy y n8n) ----------
-app.use((req, res, next) => {
-  const allowedOrigins = [
-    "https://elimfilters.com",
-    "https://elimfilterscross.app.n8n.cloud"
-  ];
-  const origin = req.headers.origin;
-  if (allowedOrigins.includes(origin)) {
-    res.setHeader("Access-Control-Allow-Origin", origin);
-  }
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  res.setHeader("Access-Control-Allow-Credentials", "true");
-  if (req.method === "OPTIONS") {
-    return res.sendStatus(200);
-  }
-  next();
-});
+// ---------- CORS Config ----------
+app.use(cors({
+  origin: [
+    'https://elimfilters.com',
+    'https://www.elimfilters.com',
+    process.env.WORDPRESS_URL || '*'
+  ],
+  methods: ['GET', 'POST'],
+  credentials: true,
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 
+// Middleware JSON
 app.use(express.json());
 
 // ---------- Inicialización Google Sheets ----------
@@ -41,12 +35,12 @@ let sheetsInstance;
   }
 })();
 
-// ---------- Endpoint de salud ----------
+// ---------- Endpoint de Salud ----------
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
     service: 'ELIMFILTERS Proxy API',
-    version: '3.8.1',
+    version: '3.8.0',
     features: {
       google_sheets: sheetsInstance ? 'connected' : 'disconnected',
       cross_reference_db: 'active',
@@ -60,7 +54,7 @@ app.get('/health', (req, res) => {
   });
 });
 
-// ---------- Endpoint principal ----------
+// ---------- Endpoint Principal ----------
 app.post('/api/detect-filter', async (req, res) => {
   const startTime = Date.now();
   const { query } = req.body || {};
@@ -73,6 +67,7 @@ app.post('/api/detect-filter', async (req, res) => {
   }
 
   try {
+    // Paso 1: Buscar en cache (hoja Master)
     const existingRow = sheetsInstance
       ? await sheetsInstance.findRowByQuery(query)
       : null;
@@ -88,9 +83,11 @@ app.post('/api/detect-filter', async (req, res) => {
       });
     }
 
+    // Paso 2: Generar nuevo registro
     console.log(`⚙️ Generando SKU para: ${query}`);
     const generatedData = await detectionService.detectFilter(query, sheetsInstance);
 
+    // Paso 3: Guardar en cache
     if (sheetsInstance && generatedData) {
       await sheetsInstance.replaceOrInsertRow(generatedData);
     }
@@ -114,7 +111,7 @@ app.post('/api/detect-filter', async (req, res) => {
   }
 });
 
-// ---------- Endpoint admin (gestión manual) ----------
+// ---------- Endpoint de Admin ----------
 app.post('/api/admin/add-equivalence', async (req, res) => {
   const { oem_number, donaldson, fram, family, admin_key } = req.body || {};
 
@@ -156,14 +153,14 @@ app.post('/api/admin/add-equivalence', async (req, res) => {
   }
 });
 
-// ---------- Fallback ----------
+// ---------- Rutas no encontradas ----------
 app.use((req, res) => {
   res.status(404).json({ status: 'ERROR', message: 'Ruta no encontrada' });
 });
 
-// ---------- Iniciar servidor ----------
-app.listen(PORT, () => {
-  console.log(`🚀 Servidor ejecutándose en puerto ${PORT}`);
-  console.log(`🌐 CORS habilitado para elimfilters.com y n8n`);
+// ---------- Iniciar Servidor ----------
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Servidor ejecutándose en puerto ${PORT} en 0.0.0.0`);
+  console.log(`🌐 CORS habilitado para: ${process.env.WORDPRESS_URL || 'Todos los orígenes'}`);
   console.log(`🔐 Admin endpoint: ${process.env.ADMIN_KEY ? 'Protegido ✅' : '⚠️ SIN PROTECCIÓN'}`);
 });
