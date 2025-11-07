@@ -17,6 +17,16 @@ const businessLogic = require('./businessLogic');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Utilidad para validar URL absoluta
+function isValidAbsoluteUrl(url) {
+  try {
+    new URL(url);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Seguridad HTTP (helmet) opcional
 if (helmet) {
   app.use(helmet({
@@ -102,29 +112,45 @@ app.get('/api/v1/filters/search', async (req, res) => {
       return res.json({ found: true, data: masterResult });
     }
 
-    console.log('⚙️ No existe en Master → ejecutando flujo n8n');
-    const n8nResponse = await fetch(process.env.N8N_WEBHOOK_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ part })
-    });
+    console.log('⚙️ No existe en Master → evaluando flujo n8n');
+    const webhook = process.env.N8N_WEBHOOK_URL;
+    if (webhook && isValidAbsoluteUrl(webhook)) {
+      const n8nResponse = await fetch(webhook, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ part })
+      });
 
-    const n8nData = await n8nResponse.json();
-    console.log('📦 Respuesta n8n:', n8nData);
+      const n8nData = await n8nResponse.json();
+      console.log('📦 Respuesta n8n:', n8nData);
 
-    if (n8nData?.reply) {
-      console.log('🆕 Nuevo SKU generado, registrando en Master...');
-      await sheetsInstance.replaceOrInsertRow(n8nData.reply);
-      console.log('✅ Registro completado, devolviendo al cliente');
-      return res.json({ found: false, data: n8nData.reply });
+      if (n8nData?.reply) {
+        console.log('🆕 Nuevo SKU generado, registrando en Master...');
+        await sheetsInstance.replaceOrInsertRow(n8nData.reply);
+        console.log('✅ Registro completado, devolviendo al cliente');
+        return res.json({ found: false, data: n8nData.reply });
+      }
+
+      console.warn('❌ Flujo n8n no devolvió un "reply" válido → usando detección local');
+      const fallback = await detectionService.detectFilter(part, sheetsInstance);
+      return res.json({ found: false, data: fallback });
+    } else {
+      console.warn('⚠️ n8n deshabilitado o URL inválida → usando detección local');
+      const fallback = await detectionService.detectFilter(part, sheetsInstance);
+      return res.json({ found: false, data: fallback });
     }
-
-    console.error('❌ Flujo n8n no devolvió un "reply" válido');
-    return res.status(500).json({ error: 'n8n no devolvió datos válidos' });
   } catch (error) {
     console.error('💥 Error en /filters/search:', error);
     return res.status(500).json({ error: 'Error interno del servidor' });
   }
+});
+
+// Alias legacy para compatibilidad con WordPress plugin
+app.get('/api/detect-filter', (req, res) => {
+  const q = req.query.part || req.query.code || req.query.q;
+  if (!q) return res.status(400).json({ error: 'Parámetro "part" requerido' });
+  const target = `/api/v1/filters/search?part=${encodeURIComponent(q)}`;
+  return res.redirect(302, target);
 });
 
 // Inicializar y arrancar
