@@ -1,4 +1,5 @@
 // detectionService.js v3.7.0 — FINAL sin web search
+let _sheetsInstance = null;
 const normalizeQuery = require('./utils/normalizeQuery');
 const { findEquivalence } = require('./crossReferenceDB');
 
@@ -117,6 +118,10 @@ function generateSkuFromPartNumber(family, partNumber) {
 /**
  * Función principal con búsqueda en 2 niveles
  */
+function setSheetsInstance(instance) {
+  _sheetsInstance = instance;
+}
+
 async function detectFilter(queryRaw, sheetsInstance = null) {
   const query = normalizeQuery(queryRaw);
   const family = detectFamily(query);
@@ -147,8 +152,9 @@ async function detectFilter(queryRaw, sheetsInstance = null) {
     let equivalence = findEquivalence(partNumber, duty);
     
     // NIVEL 2: Si no encuentra, buscar en Google Sheets
-    if (!equivalence && sheetsInstance) {
-      const sheetsCross = await sheetsInstance.findCrossReference(partNumber);
+    const sheets = sheetsInstance || _sheetsInstance;
+    if (!equivalence && sheets) {
+      const sheetsCross = await sheets.findCrossReference(partNumber);
       if (sheetsCross) {
         const targetPart = duty === 'HD' ? sheetsCross.donaldson : sheetsCross.fram;
         if (targetPart) {
@@ -193,4 +199,4 @@ async function detectFilter(queryRaw, sheetsInstance = null) {
   };
 }
 
-module.exports = { detectFilter };
+module.exports = { detectFilter, setSheetsInstance };

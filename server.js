@@ -11,6 +11,7 @@ const rateLimit = require('express-rate-limit');
 const fetch = require('node-fetch');
 const GoogleSheetsService = require('./googleSheetsConnector');
 const detectionService = require('./detectionService');
+const normalizeQuery = require('./utils/normalizeQuery');
 const businessLogic = require('./businessLogic');
 
 const app = express();
@@ -92,10 +93,11 @@ app.get('/api/v1/filters/search', async (req, res) => {
   }
 
   try {
-    const masterResult = await sheetsInstance.getPart(part);
+    const queryNorm = normalizeQuery(part);
+    const masterResult = await sheetsInstance.findRowByQuery(queryNorm);
     console.log('📘 Resultado en Sheet Master:', masterResult);
 
-    if (masterResult && Object.keys(masterResult).length > 0) {
+    if (masterResult && masterResult.found) {
       console.log('✅ Encontrado en Master → devolviendo resultado');
       return res.json({ found: true, data: masterResult });
     }
@@ -112,7 +114,7 @@ app.get('/api/v1/filters/search', async (req, res) => {
 
     if (n8nData?.reply) {
       console.log('🆕 Nuevo SKU generado, registrando en Master...');
-      await sheetsInstance.writeNewPart(n8nData.reply);
+      await sheetsInstance.replaceOrInsertRow(n8nData.reply);
       console.log('✅ Registro completado, devolviendo al cliente');
       return res.json({ found: false, data: n8nData.reply });
     }
