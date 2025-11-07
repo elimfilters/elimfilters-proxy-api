@@ -146,11 +146,69 @@ app.get('/api/v1/filters/search', async (req, res) => {
 });
 
 // Alias legacy para compatibilidad con WordPress plugin
-app.get('/api/detect-filter', (req, res) => {
-  const q = req.query.part || req.query.code || req.query.q;
-  if (!q) return res.status(400).json({ error: 'Parámetro "part" requerido' });
-  const target = `/api/v1/filters/search?part=${encodeURIComponent(q)}`;
-  return res.redirect(302, target);
+// Acepta GET y POST y responde con estructura { status: 'OK', data: {...}, source, response_time_ms }
+app.all('/api/detect-filter', async (req, res) => {
+  const started = Date.now();
+  const q =
+    (req.method === 'POST' ? (req.body?.query || req.body?.part || req.body?.code || req.body?.q) : null)
+    || req.query.part || req.query.code || req.query.q;
+
+  if (!q) {
+    return res.status(400).json({ status: 'ERROR', message: 'Parámetro "query" o "part" requerido' });
+  }
+
+  try {
+    const queryNorm = normalizeQuery(q);
+    const masterResult = await sheetsInstance.findRowByQuery(queryNorm);
+    if (masterResult && masterResult.found) {
+      const payload = {
+        status: 'OK',
+        data: { ...masterResult, original_query: q },
+        source: 'cache',
+        response_time_ms: Date.now() - started
+      };
+      return res.json(payload);
+    }
+
+    const webhook = process.env.N8N_WEBHOOK_URL;
+    if (webhook && isValidAbsoluteUrl(webhook)) {
+      try {
+        const n8nResponse = await fetch(webhook, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ part: q })
+        });
+        const n8nData = await n8nResponse.json();
+        if (n8nData?.reply) {
+          await sheetsInstance.replaceOrInsertRow(n8nData.reply);
+          const payload = {
+            status: 'OK',
+            data: { ...n8nData.reply, original_query: q },
+            source: 'generated',
+            response_time_ms: Date.now() - started
+          };
+          return res.json(payload);
+        }
+        console.warn('❌ Flujo n8n sin "reply" válido en alias; se usa fallback local');
+      } catch (e) {
+        console.warn('❌ Error invocando n8n desde alias:', e.message);
+      }
+    } else {
+      console.warn('⚠️ n8n deshabilitado o URL inválida en alias → usando detección local');
+    }
+
+    const fallback = await detectionService.detectFilter(q, sheetsInstance);
+    const payload = {
+      status: 'OK',
+      data: { ...fallback, original_query: q },
+      source: 'generated',
+      response_time_ms: Date.now() - started
+    };
+    return res.json(payload);
+  } catch (error) {
+    console.error('💥 Error en alias /api/detect-filter:', error);
+    return res.status(500).json({ status: 'ERROR', message: 'Error interno del servidor' });
+  }
 });
 
 // Inicializar y arrancar
