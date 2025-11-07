@@ -1,7 +1,12 @@
+// server.js v3.8.2 — soporte CORS, healthcheck en /health y bind 0.0.0.0
 require('dotenv').config();
 const express = require('express');
-const cors = require('cors');
-const helmet = require('helmet');
+let helmet;
+try {
+  helmet = require('helmet');
+} catch (e) {
+  console.warn('⚠️  Helmet no está instalado; continuando sin middleware de seguridad.');
+}
 const rateLimit = require('express-rate-limit');
 const fetch = require('node-fetch');
 const GoogleSheetsService = require('./googleSheetsConnector');
@@ -9,19 +14,40 @@ const detectionService = require('./detectionService');
 const businessLogic = require('./businessLogic');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
 
-// Seguridad y performance
-app.use(helmet());
-app.use(cors());
+// Seguridad HTTP (helmet) opcional
+if (helmet) {
+  app.use(helmet({
+    contentSecurityPolicy: false,
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    dnsPrefetchControl: { allow: true }
+  }));
+}
+
+// CORS restringido a dominios de elimfilters
+const allowedOrigins = [
+  'https://elimfilters.com',
+  'https://www.elimfilters.com'
+];
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (allowedOrigins.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+  }
+  res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  if (req.method === 'OPTIONS') return res.sendStatus(200);
+  next();
+});
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Limite básico
-const limiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 60
-});
+// Límite básico de rate limit
+const limiter = rateLimit({ windowMs: 60 * 1000, max: 60 });
 app.use(limiter);
 
 // Instancia de Google Sheets
@@ -38,9 +64,22 @@ async function initializeServices() {
   }
 }
 
-// Health check
-app.get('/api/v1/health', (req, res) => {
-  res.json({ status: 'ok', service: 'elimfilters-proxy-api' });
+// Endpoint de salud para Railway
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    service: 'ELIMFILTERS Proxy API',
+    version: '3.8.2',
+    features: {
+      google_sheets: sheetsInstance ? 'connected' : 'disconnected',
+      cross_reference_db: 'active',
+      wordpress_ready: true
+    },
+    endpoints: {
+      health: 'GET /health',
+      detect: 'GET /api/v1/filters/search'
+    }
+  });
 });
 
 // Endpoint principal de búsqueda
@@ -88,5 +127,5 @@ app.get('/api/v1/filters/search', async (req, res) => {
 
 // Inicializar y arrancar
 initializeServices().then(() => {
-  app.listen(PORT, () => console.log(`🚀 Servidor corriendo en puerto ${PORT}`));
+  app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Servidor corriendo en puerto ${PORT} en 0.0.0.0`));
 });
