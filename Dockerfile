@@ -16,8 +16,8 @@ RUN npm install --no-audit --no-fund
 # Copia todo el código del proyecto dentro del contenedor
 COPY . .
 
-# Expone el puerto que usará la aplicación (coincide con PORT=3000 en Railway)
-EXPOSE 3000
+# Expone el puerto que usará la aplicación (coincide con PORT=8080 en Railway)
+EXPOSE 8080
 
 # Comando por defecto para iniciar la API
 CMD ["node", "server.js"]
