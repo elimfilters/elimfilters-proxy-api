@@ -1,4 +1,4 @@
-// server.js v3.8.2 — soporte CORS, healthcheck en /health y bind 0.0.0.0
+// server.js v3.8.3 — CORS mejorado + formato compatible con WordPress plugin
 require('dotenv').config();
 const express = require('express');
 let helmet;
@@ -36,21 +36,37 @@ if (helmet) {
   }));
 }
 
-// CORS restringido a dominios de elimfilters
+// ✅ CORS MEJORADO - Permite orígenes de elimfilters + testing local
 const allowedOrigins = [
   'https://elimfilters.com',
-  'https://www.elimfilters.com'
+  'https://www.elimfilters.com',
+  'http://localhost:8000',
+  'http://localhost:3000',
+  'http://127.0.0.1:8000',
+  'http://127.0.0.1:3000'
 ];
 
 app.use((req, res, next) => {
   const origin = req.headers.origin;
+  
+  // Permitir orígenes específicos
   if (allowedOrigins.includes(origin)) {
     res.header('Access-Control-Allow-Origin', origin);
+  } else if (!origin) {
+    // Permitir requests sin origin (ej: Postman, cURL, testing)
+    res.header('Access-Control-Allow-Origin', '*');
   }
-  res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+  
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
   res.header('Access-Control-Allow-Credentials', 'true');
-  if (req.method === 'OPTIONS') return res.sendStatus(200);
+  res.header('Access-Control-Max-Age', '86400'); // Cache preflight por 24h
+  
+  // Manejar preflight OPTIONS
+  if (req.method === 'OPTIONS') {
+    return res.status(204).end();
+  }
+  
   next();
 });
 
@@ -80,15 +96,17 @@ app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
     service: 'ELIMFILTERS Proxy API',
-    version: '3.8.2',
+    version: '3.8.3',
     features: {
       google_sheets: sheetsInstance ? 'connected' : 'disconnected',
       cross_reference_db: 'active',
-      wordpress_ready: true
+      wordpress_ready: true,
+      cors_enabled: true
     },
     endpoints: {
       health: 'GET /health',
-      detect: 'GET /api/v1/filters/search'
+      detect: 'POST /api/detect-filter',
+      search: 'GET /api/v1/filters/search'
     }
   });
 });
@@ -145,22 +163,36 @@ app.get('/api/v1/filters/search', async (req, res) => {
   }
 });
 
-// Alias legacy para compatibilidad con WordPress plugin
-// Acepta GET y POST y responde con estructura { status: 'OK', data: {...}, source, response_time_ms }
+// ✅ MEJORADO: Alias legacy para WordPress plugin
+// Mantiene compatibilidad con formato antiguo { status, data, source }
+// pero agrega logging para debugging
 app.all('/api/detect-filter', async (req, res) => {
   const started = Date.now();
   const q =
     (req.method === 'POST' ? (req.body?.query || req.body?.part || req.body?.code || req.body?.q) : null)
     || req.query.part || req.query.code || req.query.q;
 
+  console.log('🔍 [/api/detect-filter] Consulta recibida:', {
+    method: req.method,
+    query: q,
+    origin: req.headers.origin,
+    contentType: req.headers['content-type']
+  });
+
   if (!q) {
-    return res.status(400).json({ status: 'ERROR', message: 'Parámetro "query" o "part" requerido' });
+    console.warn('⚠️ [/api/detect-filter] Parámetro faltante');
+    return res.status(400).json({ 
+      status: 'ERROR', 
+      message: 'Parámetro "query", "part", "code" o "q" es requerido' 
+    });
   }
 
   try {
     const queryNorm = normalizeQuery(q);
     const masterResult = await sheetsInstance.findRowByQuery(queryNorm);
+    
     if (masterResult && masterResult.found) {
+      console.log('✅ [/api/detect-filter] Encontrado en cache');
       const payload = {
         status: 'OK',
         data: { ...masterResult, original_query: q },
@@ -173,13 +205,16 @@ app.all('/api/detect-filter', async (req, res) => {
     const webhook = process.env.N8N_WEBHOOK_URL;
     if (webhook && isValidAbsoluteUrl(webhook)) {
       try {
+        console.log('⚙️ [/api/detect-filter] Consultando n8n...');
         const n8nResponse = await fetch(webhook, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ part: q })
         });
         const n8nData = await n8nResponse.json();
+        
         if (n8nData?.reply) {
+          console.log('🆕 [/api/detect-filter] SKU generado por n8n');
           await sheetsInstance.replaceOrInsertRow(n8nData.reply);
           const payload = {
             status: 'OK',
@@ -189,14 +224,13 @@ app.all('/api/detect-filter', async (req, res) => {
           };
           return res.json(payload);
         }
-        console.warn('❌ Flujo n8n sin "reply" válido en alias; se usa fallback local');
+        console.warn('❌ [/api/detect-filter] n8n sin reply válido');
       } catch (e) {
-        console.warn('❌ Error invocando n8n desde alias:', e.message);
+        console.warn('❌ [/api/detect-filter] Error invocando n8n:', e.message);
       }
-    } else {
-      console.warn('⚠️ n8n deshabilitado o URL inválida en alias → usando detección local');
     }
 
+    console.log('🔄 [/api/detect-filter] Usando detección local');
     const fallback = await detectionService.detectFilter(q, sheetsInstance);
     const payload = {
       status: 'OK',
@@ -205,13 +239,23 @@ app.all('/api/detect-filter', async (req, res) => {
       response_time_ms: Date.now() - started
     };
     return res.json(payload);
+    
   } catch (error) {
-    console.error('💥 Error en alias /api/detect-filter:', error);
-    return res.status(500).json({ status: 'ERROR', message: 'Error interno del servidor' });
+    console.error('💥 [/api/detect-filter] Error:', error);
+    return res.status(500).json({ 
+      status: 'ERROR', 
+      message: 'Error interno del servidor',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 
 // Inicializar y arrancar
 initializeServices().then(() => {
-  app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Servidor corriendo en puerto ${PORT} en 0.0.0.0`));
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Servidor corriendo en puerto ${PORT} en 0.0.0.0`);
+    console.log(`✅ CORS habilitado para: ${allowedOrigins.join(', ')}`);
+    console.log(`📡 Health check: http://localhost:${PORT}/health`);
+    console.log(`🔍 API endpoint: http://localhost:${PORT}/api/detect-filter`);
+  });
 });
