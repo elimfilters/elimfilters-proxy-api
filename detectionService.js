@@ -1,7 +1,10 @@
-// detectionService.js v3.7.0 — FINAL sin web search
+// detectionService.js v4.0.0 — CON WEB SCRAPING COMPLETO
 let _sheetsInstance = null;
 const normalizeQuery = require('./utils/normalizeQuery');
 const { findEquivalence } = require('./crossReferenceDB');
+const { getDonaldsonData } = require('./scrapers/donaldsonScraper');
+const { getFRAMData } = require('./scrapers/framScraper');
+const { cleanArray, formatEngineApplication, formatEquipmentApplication, combineWithDefaults, generateDefaultDescription } = require('./scrapers/utils');
 
 const OEM_MANUFACTURERS = [
   'CATERPILLAR', 'KOMATSU', 'CUMMINS', 'VOLVO', 'MACK', 'JOHN DEERE',
@@ -115,88 +118,136 @@ function generateSkuFromPartNumber(family, partNumber) {
   return rule.prefix + lastFour;
 }
 
-/**
- * Función principal con búsqueda en 2 niveles
- */
 function setSheetsInstance(instance) {
   _sheetsInstance = instance;
 }
 
+/**
+ * Función principal con scraping completo
+ */
 async function detectFilter(queryRaw, sheetsInstance = null) {
+  console.log(`\n🔍 ====== INICIO DETECCIÓN: ${queryRaw} ======`);
+  
   const query = normalizeQuery(queryRaw);
   const family = detectFamily(query);
   const duty = detectDuty(query, family);
   const source = detectSource(query);
   const partNumber = extractPartNumber(query);
   
+  console.log(`📊 Detección inicial:`, { family, duty, source, partNumber });
+  
   const directCross = isAlreadyCrossReference(query);
   
   let sku;
-  let usedPartNumber;
-  let crossBrand = 'N/A';
-  let crossPartNumber = 'N/A';
-  let oemNumber = partNumber;
+  let homologatedCode;
+  let scraperData = null;
   
+  // CASO 1: Ya es cross-reference directo (Donaldson, FRAM, etc.)
   if (directCross) {
-    // Ya es cross-reference directo
-    sku = generateSkuFromPartNumber(family, directCross.partNumber);
-    usedPartNumber = directCross.partNumber;
-    crossBrand = directCross.brand;
-    crossPartNumber = directCross.partNumber;
-    oemNumber = 'N/A';
-    console.log(`✅ Cross-reference directo: ${directCross.brand} ${directCross.partNumber} → SKU: ${sku}`);
-  } else {
-    // Es OEM - buscar equivalencia
+    console.log(`✅ Es cross-reference directo: ${directCross.brand} ${directCross.partNumber}`);
+    homologatedCode = directCross.partNumber;
+    sku = generateSkuFromPartNumber(family, homologatedCode);
     
-    // NIVEL 1: Buscar en DB local (crossReferenceDB.js)
+    // Scrape datos completos
+    if (directCross.brand === 'DONALDSON') {
+      scraperData = await getDonaldsonData(homologatedCode);
+    } else if (directCross.brand === 'FRAM') {
+      scraperData = await getFRAMData(homologatedCode);
+    }
+  } 
+  // CASO 2: Es OEM - buscar homologación
+  else {
+    console.log(`🔄 Es OEM, buscando homologación...`);
+    
+    // NIVEL 1: Buscar en DB local
     let equivalence = findEquivalence(partNumber, duty);
     
-    // NIVEL 2: Si no encuentra, buscar en Google Sheets
-    const sheets = sheetsInstance || _sheetsInstance;
-    if (!equivalence && sheets) {
-      const sheetsCross = await sheets.findCrossReference(partNumber);
-      if (sheetsCross) {
-        const targetPart = duty === 'HD' ? sheetsCross.donaldson : sheetsCross.fram;
-        if (targetPart) {
-          equivalence = {
-            brand: duty === 'HD' ? 'DONALDSON' : 'FRAM',
-            partNumber: targetPart,
-            family: sheetsCross.family || family
-          };
-          console.log(`📗 Equivalencia encontrada en Google Sheets: ${equivalence.brand} ${equivalence.partNumber}`);
+    if (equivalence) {
+      console.log(`📗 Equivalencia en DB local: ${equivalence.brand} ${equivalence.partNumber}`);
+      homologatedCode = equivalence.partNumber;
+    } else {
+      // NIVEL 2: Buscar en Google Sheets
+      const sheets = sheetsInstance || _sheetsInstance;
+      if (sheets) {
+        const sheetsCross = await sheets.findCrossReference(partNumber);
+        if (sheetsCross) {
+          const targetPart = duty === 'HD' ? sheetsCross.donaldson : sheetsCross.fram;
+          if (targetPart) {
+            console.log(`📘 Equivalencia en Sheets: ${duty === 'HD' ? 'DONALDSON' : 'FRAM'} ${targetPart}`);
+            homologatedCode = targetPart;
+          }
         }
       }
     }
     
-    if (equivalence) {
-      sku = generateSkuFromPartNumber(family, equivalence.partNumber);
-      usedPartNumber = equivalence.partNumber;
-      crossBrand = equivalence.brand;
-      crossPartNumber = equivalence.partNumber;
-      oemNumber = partNumber;
-      console.log(`✅ Equivalencia confirmada: OEM ${partNumber} → ${equivalence.brand} ${equivalence.partNumber} → SKU: ${sku}`);
+    // NIVEL 3: Web Scraping en tiempo real
+    if (!homologatedCode) {
+      console.log(`🌐 Buscando homologación con scraping...`);
+      
+      if (duty === 'HD') {
+        // Buscar en Donaldson
+        const donaldsonData = await getDonaldsonData(partNumber);
+        if (donaldsonData.found) {
+          homologatedCode = donaldsonData.donaldson_code;
+          scraperData = donaldsonData;
+          console.log(`✅ Encontrado en Donaldson: ${homologatedCode}`);
+        }
+      } else if (duty === 'LD') {
+        // Buscar en FRAM
+        const framData = await getFRAMData(partNumber);
+        if (framData.found) {
+          homologatedCode = framData.fram_code;
+          scraperData = framData;
+          console.log(`✅ Encontrado en FRAM: ${homologatedCode}`);
+        }
+      }
+    }
+    
+    // Si encontró homologación, usar ese código
+    if (homologatedCode) {
+      sku = generateSkuFromPartNumber(family, homologatedCode);
+      console.log(`✅ SKU homologado: ${sku} (usando ${homologatedCode})`);
     } else {
-      // No encontró equivalencia - usar OEM
+      // No encontró homologación - usar OEM directo
+      homologatedCode = partNumber;
       sku = generateSkuFromPartNumber(family, partNumber);
-      usedPartNumber = partNumber;
-      oemNumber = partNumber;
-      console.log(`⚠️ Sin cross-reference, usando OEM: ${partNumber} → SKU: ${sku}`);
+      console.log(`⚠️ Sin homologación, usando OEM: ${sku}`);
     }
   }
   
-  return {
+  // Compilar datos completos
+  const result = {
+    status: 'OK',
+    from_cache: false,
+    
+    // Básicos
     query_norm: query,
-    sku,
-    family,
-    duty,
-    source,
-    oem_number: oemNumber,
-    cross_brand: crossBrand,
-    cross_part_number: crossPartNumber,
-    homologated_sku: sku,
-    filter_type: family !== 'UNKNOWN' ? `${family} FILTER` : '',
-    description: `Filtro homologado tipo ${family} para aplicación ${duty === 'HD' ? 'Heavy Duty' : 'Light Duty'}`,
+    sku: sku,
+    filter_type: family,
+    duty: duty,
+    oem_code: partNumber,
+    source_code: homologatedCode,
+    source: scraperData ? (duty === 'HD' ? 'donaldson' : 'fram') : 'oem',
+    
+    // Arrays (máximo 10 cada uno)
+    cross_reference: scraperData ? cleanArray(scraperData.cross_references, 10) : [],
+    oem_codes: scraperData ? cleanArray(scraperData.oem_codes, 10) : [],
+    engine_applications: scraperData ? cleanArray(scraperData.engine_applications.map(formatEngineApplication), 10) : [],
+    equipment_applications: scraperData ? cleanArray(scraperData.equipment_applications.map(formatEquipmentApplication), 10) : [],
+    
+    // Specs
+    specs: scraperData ? combineWithDefaults(scraperData, family, duty).specs : {},
+    
+    // Descripción
+    description: scraperData && scraperData.description ? scraperData.description : generateDefaultDescription(sku, family, duty),
+    
+    // Metadata
+    created_at: new Date().toISOString()
   };
+  
+  console.log(`✅ ====== FIN DETECCIÓN: ${sku} ======\n`);
+  
+  return result;
 }
 
 module.exports = { detectFilter, setSheetsInstance };
