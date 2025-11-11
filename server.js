@@ -15,7 +15,7 @@ const normalizeQuery = require('./utils/normalizeQuery');
 const businessLogic = require('./businessLogic');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
 
 // Utilidad para validar URL absoluta
 function isValidAbsoluteUrl(url) {
