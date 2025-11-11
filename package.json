@@ -1,7 +1,7 @@
 {
   "name": "elimfilters-proxy-api",
-  "version": "3.8.2",
-  "description": "ELIMFILTERS SKU Generator API",
+  "version": "4.0.0",
+  "description": "ELIMFILTERS SKU Generator API with Web Scraping",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -14,7 +14,10 @@
     "dotenv": "^16.0.3",
     "googleapis": "^118.0.0",
     "express-rate-limit": "^7.0.0",
-    "node-fetch": "^2.6.7"
+    "node-fetch": "^2.6.7",
+    "puppeteer": "^21.5.0",
+    "cheerio": "^1.0.0-rc.12",
+    "axios": "^1.6.0"
   },
   "devDependencies": {
     "nodemon": "^2.0.22"
