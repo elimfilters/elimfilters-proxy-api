@@ -81,7 +81,7 @@ const FAMILY_RULES = {
 function isAlreadyCrossReference(query) {
   const q = query.toUpperCase().replace(/[-\s]/g, '');
   if (/^(P|B|DB|DBC|X|L|E)\d{4,}/.test(q)) return { brand: 'DONALDSON', duty: 'HD', partNumber: q };
-  if (/^(PH|CA|CS|CF|FS|CH|BG|G)\d{3,}/.test(q)) return { brand: 'FRAM', duty: 'LD', partNumber: q };
+  if (/^(PH|CA|CS|FS|CH|BG|G)\d{4,}/.test(q)) return { brand: 'FRAM', duty: 'LD', partNumber: q };
   if (/^CF\d{5}/.test(q)) return { brand: 'FRAM', duty: 'LD', partNumber: q };
   if (/^(LF|FF|AF|HF)\d{4,}/.test(q)) return { brand: 'FLEETGUARD', duty: 'HD', partNumber: q };
   if (/^(B|BT|PA)\d{3,}/.test(q)) return { brand: 'BALDWIN', duty: 'HD', partNumber: q };
@@ -89,4 +89,56 @@ function isAlreadyCrossReference(query) {
   return null;
 }
 
-module.exports = { isAlreadyCrossReference, setSheetsInstance, OEM_MANUFACTURERS, CROSS_MANUFACTURERS, FAMILY_RULES };
+function setSheetsInstance(instance) {
+  _sheetsInstance = instance;
+}
+
+async function detectFilter(query, sheetsInstance = _sheetsInstance) {
+  const q = normalizeQuery(query);
+  const match = isAlreadyCrossReference(q);
+  if (match) return { ...match, sku: match.partNumber, oem_code: q, source_code: q, source: 'DETECTED', cross_reference: [], oem_codes: [], engine_applications: [], equipment_applications: [], specs: {}, description: '', found: true };
+
+  const oemBrand = OEM_MANUFACTURERS.find(brand => q.includes(brand.replace(/\s/g, '')));
+  if (!oemBrand) return { status: 'NOT_SUPPORTED', message: 'OEM brand not supported' };
+
+  const cross = await findEquivalence(q);
+  let crossData = cross || {};
+
+  if (!cross) {
+    if (oemBrand && sheetsInstance) {
+      const donaldson = await getDonaldsonData(q);
+      const fram = await getFRAMData(q);
+
+      crossData = donaldson.found ? donaldson : fram;
+    }
+  }
+
+  if (!crossData.found) return { status: 'NOT_FOUND', query: q };
+
+  const allData = combineWithDefaults({
+    ...crossData,
+    cross_references: cleanArray(crossData.cross_references),
+    oem_codes: cleanArray(crossData.oem_codes),
+    engine_applications: crossData.engine_applications.map(formatEngineApplication),
+    equipment_applications: crossData.equipment_applications.map(formatEquipmentApplication),
+    description: crossData.description || generateDefaultDescription(q, 'FILTER', crossData.duty)
+  }, 'FILTER', crossData.duty);
+
+  if (sheetsInstance) await sheetsInstance.replaceOrInsertRow({
+    sku: q,
+    filter_type: 'FILTER',
+    duty: allData.duty,
+    oem_code: q,
+    source_code: q,
+    source: 'SCRAPED',
+    cross_reference: allData.cross_references,
+    oem_codes: allData.oem_codes,
+    engine_applications: allData.engine_applications,
+    equipment_applications: allData.equipment_applications,
+    description: allData.description,
+  });
+
+  return { ...allData, sku: q, oem_code: q, source_code: q, source: 'SCRAPED' };
+}
+
+module.exports = { detectFilter, setSheetsInstance };
