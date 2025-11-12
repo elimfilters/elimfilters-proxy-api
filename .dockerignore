@@ -1,0 +1,28 @@
+# Excluir archivos y carpetas innecesarias del contexto de Docker
+
+# Control de versiones
+.git
+.gitignore
+
+# Entornos y secretos
+.env
+.env.*
+railway-variables.txt
+
+# Dependencias locales (se instalan dentro del contenedor)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Artefactos de build y distribución
+dist/
+build/
+dist-plugin/
+wordpress-integration/
+*.zip
+*.log
+
+# Archivos de sistema
+.DS_Store
+Thumbs.db
