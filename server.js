@@ -163,8 +163,20 @@ async function initializeServices() {
   }
 }
 
-// Endpoint de salud para Railway
+// ===================================================================
+// === INICIO DEL BLOQUE CORREGIDO ===
+// Endpoint de salud para Railway (Ultra-simplificado para máxima velocidad)
 app.get('/health', (req, res) => {
+  // 1. Mensaje de depuración: Sabremos si Railway está llegando aquí.
+  console.log('*** PETICIÓN DE HEALTH CHECK RECIBIDA Y RESPONDIDA ***');
+
+  // 2. Respuesta correcta y rápida: Envía un estado 200 (OK) y un texto simple.
+  //    Esto es exactamente lo que Railway espera y es extremadamente rápido.
+  res.status(200).send('OK');
+});
+
+// Endpoint de salud detallado (Mueve la lógica compleja aquí para diagnóstico)
+app.get('/health/detailed', (req, res) => {
   const webhookUrl = process.env.N8N_WEBHOOK_URL || '';
   const timeoutMs = parseInt(process.env.N8N_TIMEOUT_MS || '5000', 10);
   const allowedHostsEnv = (process.env.N8N_ALLOWED_HOSTS || '').trim();
@@ -194,6 +206,7 @@ app.get('/health', (req, res) => {
     },
     endpoints: {
       health: 'GET /health',
+      health_detailed: 'GET /health/detailed',
       detect: 'GET /api/v1/filters/search',
       prefixes: 'GET /api/v1/prefixes',
       oem_ranking: 'GET /api/v1/oem-ranking'
@@ -206,6 +219,9 @@ app.get('/health', (req, res) => {
     }
   });
 });
+// === FIN DEL BLOQUE CORREGIDO ===
+// ===================================================================
+
 
 // Diagnóstico de Master Sheet: headers y estado
 app.get('/health/master', async (req, res) => {
