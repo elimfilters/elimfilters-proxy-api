@@ -1,7 +1,7 @@
-// detectionService.js v4.0.3 — ARCHIVOS EN RAÍZ (scrapers sin subcarpeta)
+// detectionService.js v4.1.0 — SIN SCRAPERS (version estable)
 let _sheetsInstance = null;
 
-console.log('🟢 [DEBUG] Iniciando carga de módulos...');
+console.log('🟢 [DEBUG] Iniciando detectionService SIN scrapers...');
 
 const normalizeQuery = require('./utils/normalizeQuery');
 console.log('✅ [DEBUG] normalizeQuery cargado');
@@ -9,49 +9,8 @@ console.log('✅ [DEBUG] normalizeQuery cargado');
 const { findEquivalence } = require('./crossReferenceDB');
 console.log('✅ [DEBUG] crossReferenceDB cargado');
 
-// Scrapers - TODOS EN RAÍZ
-let getDonaldsonData, getFRAMData, cleanArray, formatEngineApplication, formatEquipmentApplication, combineWithDefaults, generateDefaultDescription;
-
-try {
-  console.log('🔍 [DEBUG] Cargando donaldsonScraper...');
-  const donaldsonModule = require('./donaldsonScraper');
-  getDonaldsonData = donaldsonModule.getDonaldsonData;
-  console.log('✅ [DEBUG] donaldsonScraper cargado');
-} catch (error) {
-  console.error('❌ [DEBUG] Error cargando donaldsonScraper:', error.message);
-  getDonaldsonData = async () => ({ found: false, cross_references: [], oem_codes: [], engine_applications: [], equipment_applications: [], specs: {}, description: '' });
-}
-
-try {
-  console.log('🔍 [DEBUG] Cargando framScraper...');
-  const framModule = require('./framScraper');
-  getFRAMData = framModule.getFRAMData;
-  console.log('✅ [DEBUG] framScraper cargado');
-} catch (error) {
-  console.error('❌ [DEBUG] Error cargando framScraper:', error.message);
-  getFRAMData = async () => ({ found: false, cross_references: [], oem_codes: [], engine_applications: [], equipment_applications: [], specs: {}, description: '' });
-}
-
-try {
-  console.log('🔍 [DEBUG] Cargando scrapersUtils...');
-  const utilsModule = require('./scrapersUtils');  // ← SIN GUION, EN RAÍZ
-  cleanArray = utilsModule.cleanArray || ((arr, max) => (arr || []).slice(0, max || 10));
-  formatEngineApplication = utilsModule.formatEngineApplication || (text => text);
-  formatEquipmentApplication = utilsModule.formatEquipmentApplication || (text => text);
-  combineWithDefaults = utilsModule.combineWithDefaults || ((data) => data);
-  generateDefaultDescription = utilsModule.generateDefaultDescription || ((sku, family, duty) => `Filter ${sku} ${family} ${duty}`);
-  console.log('✅ [DEBUG] scrapersUtils cargado');
-} catch (error) {
-  console.error('❌ [DEBUG] Error cargando scrapersUtils:', error.message);
-  console.log('⚠️ [DEBUG] Usando funciones por defecto');
-  cleanArray = (arr, max) => (arr || []).slice(0, max || 10);
-  formatEngineApplication = text => text;
-  formatEquipmentApplication = text => text;
-  combineWithDefaults = (data) => data;
-  generateDefaultDescription = (sku, family, duty) => `Filter ${sku} ${family} ${duty}`;
-}
-
-console.log('✅ [DEBUG] Todos los módulos cargados');
+// SCRAPERS DESHABILITADOS - Usar solo DB local y Sheets
+console.log('⚠️ [DEBUG] Scrapers deshabilitados - usando solo DB local');
 
 const OEM_MANUFACTURERS = [
   'CATERPILLAR', 'KOMATSU', 'CUMMINS', 'VOLVO', 'MACK', 'JOHN DEERE',
@@ -147,53 +106,32 @@ async function detectFilter(queryRaw, sheetsInstance = null) {
   console.log(`\n🔵 ====== INICIO DETECCIÓN: ${queryRaw} ======`);
   
   try {
-    console.log('🔍 [1/10] Normalizando...');
     const query = normalizeQuery(queryRaw);
-    console.log(`✅ Query: "${query}"`);
-    
-    console.log('🔍 [2/10] Detectando family...');
     const family = detectFamily(query);
-    console.log(`✅ Family: ${family}`);
-    
-    console.log('🔍 [3/10] Detectando duty...');
     const duty = detectDuty(query, family);
-    console.log(`✅ Duty: ${duty}`);
-    
     const source = detectSource(query);
     const partNumber = extractPartNumber(query);
-    console.log(`✅ Part: ${partNumber}`);
+    
+    console.log(`📊 Detección: family=${family}, duty=${duty}, part=${partNumber}`);
     
     const directCross = isAlreadyCrossReference(query);
-    let sku, homologatedCode, scraperData = null;
+    let sku, homologatedCode;
     
     if (directCross) {
-      console.log(`✅ [6/10] Cross directo: ${directCross.brand} ${directCross.partNumber}`);
+      console.log(`✅ Cross directo: ${directCross.brand} ${directCross.partNumber}`);
       homologatedCode = directCross.partNumber;
       sku = generateSkuFromPartNumber(family, homologatedCode);
-      
-      console.log('🌐 [7/10] Scraping...');
-      try {
-        if (directCross.brand === 'DONALDSON' && getDonaldsonData) {
-          const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 30000));
-          scraperData = await Promise.race([getDonaldsonData(homologatedCode), timeout]);
-          console.log('✅ Scraping OK');
-        } else if (directCross.brand === 'FRAM' && getFRAMData) {
-          const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 30000));
-          scraperData = await Promise.race([getFRAMData(homologatedCode), timeout]);
-          console.log('✅ Scraping OK');
-        }
-      } catch (err) {
-        console.error('❌ Scraping error:', err.message);
-      }
     } else {
-      console.log(`🔄 [6/10] OEM - buscando homologación...`);
+      console.log(`🔄 OEM - buscando homologación...`);
       
+      // NIVEL 1: DB local
       let equivalence = findEquivalence(partNumber, duty);
       
       if (equivalence) {
         console.log(`✅ DB: ${equivalence.brand} ${equivalence.partNumber}`);
         homologatedCode = equivalence.partNumber;
       } else {
+        // NIVEL 2: Google Sheets
         const sheets = sheetsInstance || _sheetsInstance;
         if (sheets) {
           try {
@@ -211,38 +149,7 @@ async function detectFilter(queryRaw, sheetsInstance = null) {
         }
       }
       
-      console.log('🌐 [7/10] Web scraping...');
-      if (!homologatedCode) {
-        try {
-          if (duty === 'HD' && getDonaldsonData) {
-            console.log('🔍 Scraping Donaldson...');
-            const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 30000));
-            const data = await Promise.race([getDonaldsonData(partNumber), timeout]);
-            if (data && data.found) {
-              homologatedCode = data.donaldson_code;
-              scraperData = data;
-              console.log(`✅ Found: ${homologatedCode}`);
-            } else {
-              console.log('⚠️ Not found on Donaldson');
-            }
-          } else if (duty === 'LD' && getFRAMData) {
-            console.log('🔍 Scraping FRAM...');
-            const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 30000));
-            const data = await Promise.race([getFRAMData(partNumber), timeout]);
-            if (data && data.found) {
-              homologatedCode = data.fram_code;
-              scraperData = data;
-              console.log(`✅ Found: ${homologatedCode}`);
-            } else {
-              console.log('⚠️ Not found on FRAM');
-            }
-          }
-        } catch (err) {
-          console.error('❌ Scraping error:', err.message);
-        }
-      }
-      
-      console.log('🔍 [8/10] Generando SKU...');
+      // Generar SKU
       if (homologatedCode) {
         sku = generateSkuFromPartNumber(family, homologatedCode);
         console.log(`✅ SKU homologado: ${sku}`);
@@ -253,7 +160,6 @@ async function detectFilter(queryRaw, sheetsInstance = null) {
       }
     }
     
-    console.log('🔍 [9/10] Compilando...');
     const result = {
       status: 'OK',
       from_cache: false,
@@ -263,24 +169,24 @@ async function detectFilter(queryRaw, sheetsInstance = null) {
       duty: duty,
       oem_code: partNumber,
       source_code: homologatedCode,
-      source: scraperData ? (duty === 'HD' ? 'donaldson' : 'fram') : 'oem',
-      cross_reference: scraperData ? cleanArray(scraperData.cross_references, 10) : [],
-      oem_codes: scraperData ? cleanArray(scraperData.oem_codes, 10) : [],
-      engine_applications: scraperData ? cleanArray(scraperData.engine_applications.map(formatEngineApplication), 10) : [],
-      equipment_applications: scraperData ? cleanArray(scraperData.equipment_applications.map(formatEquipmentApplication), 10) : [],
-      specs: scraperData ? (combineWithDefaults(scraperData, family, duty).specs || {}) : {},
-      description: scraperData && scraperData.description ? scraperData.description : generateDefaultDescription(sku, family, duty),
-      created_at: new Date().toISOString()
+      source: 'database',
+      cross_reference: [],
+      oem_codes: [],
+      engine_applications: [],
+      equipment_applications: [],
+      specs: {},
+      description: `Filtro ${family} para ${duty === 'HD' ? 'Heavy Duty' : 'Light Duty'} - SKU: ${sku}`,
+      created_at: new Date().toISOString(),
+      note: 'Scrapers deshabilitados - usando solo DB local y Sheets'
     };
     
-    console.log(`✅ [10/10] DONE: ${sku}`);
+    console.log(`✅ Completado: ${sku}`);
     console.log(`🔵 ====== FIN DETECCIÓN ======\n`);
     
     return result;
     
   } catch (error) {
-    console.error(`❌ ERROR CRÍTICO:`, error.message);
-    console.error('Stack:', error.stack);
+    console.error(`❌ ERROR:`, error.message);
     
     return {
       status: 'ERROR',
@@ -301,6 +207,6 @@ async function detectFilter(queryRaw, sheetsInstance = null) {
   }
 }
 
-console.log('✅ [DEBUG] detectionService.js READY');
+console.log('✅ [DEBUG] detectionService.js READY (sin scrapers)');
 
 module.exports = { detectFilter, setSheetsInstance };
