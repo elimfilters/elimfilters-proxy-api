@@ -1,0 +1,18 @@
+{
+  "version": "1.0.0",
+  "OEM_HD": [
+    "CATERPILLAR", "KOMATSU", "CUMMINS", "VOLVO", "MACK", "JOHN DEERE",
+    "DETROIT DIESEL", "PERKINS", "CASE", "NEW HOLLAND", "SCANIA",
+    "MERCEDES TRUCK", "KENWORTH", "PETERBILT", "FREIGHTLINER",
+    "INTERNATIONAL", "MTU", "PACCAR", "HINO", "IVECO", "ISUZU", "FORD", "ALLIANCE"
+  ],
+  "OEM_LD": [
+    "TOYOTA", "HONDA", "NISSAN", "FORD", "CHEVROLET", "GM", "VOLKSWAGEN",
+    "AUDI", "BMW", "MERCEDES-BENZ", "RENAULT", "PEUGEOT", "CITROËN", "FIAT",
+    "KIA", "HYUNDAI", "MAZDA", "SUBARU", "MITSUBISHI", "SEAT", "ŠKODA", "VOLVO"
+  ],
+  "CROSS_HD": ["DONALDSON", "FLEETGUARD", "BALDWIN", "PARKER"],
+  "CROSS_LD": ["FRAM", "WIX", "PUROLATOR", "MANN", "HENGST", "KNECHT", "CHAMPION"],
+  "notes": "Listas indicativas por sector (HD/LD); pueden existir excepciones regionales."
+  ,"region_overrides": {"GLOBAL": {}, "LATAM": {}, "EU": {}, "NA": {}}
+}
