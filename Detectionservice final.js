@@ -1,4 +1,4 @@
-// detectionService.js v4.0.2 — SCRAPERS EN RAÍZ (sin subcarpeta)
+// detectionService.js v4.0.3 — ARCHIVOS EN RAÍZ (scrapers sin subcarpeta)
 let _sheetsInstance = null;
 
 console.log('🟢 [DEBUG] Iniciando carga de módulos...');
@@ -9,40 +9,41 @@ console.log('✅ [DEBUG] normalizeQuery cargado');
 const { findEquivalence } = require('./crossReferenceDB');
 console.log('✅ [DEBUG] crossReferenceDB cargado');
 
-// Scrapers - BUSCANDO EN RAÍZ (sin ./scrapers/)
+// Scrapers - TODOS EN RAÍZ
 let getDonaldsonData, getFRAMData, cleanArray, formatEngineApplication, formatEquipmentApplication, combineWithDefaults, generateDefaultDescription;
 
 try {
-  console.log('🔍 [DEBUG] Intentando cargar donaldsonScraper desde raíz...');
-  const donaldsonModule = require('./donaldsonScraper');  // ← SIN scrapers/
+  console.log('🔍 [DEBUG] Cargando donaldsonScraper...');
+  const donaldsonModule = require('./donaldsonScraper');
   getDonaldsonData = donaldsonModule.getDonaldsonData;
-  console.log('✅ [DEBUG] donaldsonScraper cargado desde raíz');
+  console.log('✅ [DEBUG] donaldsonScraper cargado');
 } catch (error) {
   console.error('❌ [DEBUG] Error cargando donaldsonScraper:', error.message);
   getDonaldsonData = async () => ({ found: false, cross_references: [], oem_codes: [], engine_applications: [], equipment_applications: [], specs: {}, description: '' });
 }
 
 try {
-  console.log('🔍 [DEBUG] Intentando cargar framScraper desde raíz...');
-  const framModule = require('./framScraper');  // ← SIN scrapers/
+  console.log('🔍 [DEBUG] Cargando framScraper...');
+  const framModule = require('./framScraper');
   getFRAMData = framModule.getFRAMData;
-  console.log('✅ [DEBUG] framScraper cargado desde raíz');
+  console.log('✅ [DEBUG] framScraper cargado');
 } catch (error) {
   console.error('❌ [DEBUG] Error cargando framScraper:', error.message);
   getFRAMData = async () => ({ found: false, cross_references: [], oem_codes: [], engine_applications: [], equipment_applications: [], specs: {}, description: '' });
 }
 
 try {
-  console.log('🔍 [DEBUG] Intentando cargar scrapers-utils desde raíz...');
-  const utilsModule = require('./scrapers-utils');  // ← Buscar scrapers-utils.js en raíz
+  console.log('🔍 [DEBUG] Cargando scrapersUtils...');
+  const utilsModule = require('./scrapersUtils');  // ← SIN GUION, EN RAÍZ
   cleanArray = utilsModule.cleanArray || ((arr, max) => (arr || []).slice(0, max || 10));
   formatEngineApplication = utilsModule.formatEngineApplication || (text => text);
   formatEquipmentApplication = utilsModule.formatEquipmentApplication || (text => text);
   combineWithDefaults = utilsModule.combineWithDefaults || ((data) => data);
   generateDefaultDescription = utilsModule.generateDefaultDescription || ((sku, family, duty) => `Filter ${sku} ${family} ${duty}`);
-  console.log('✅ [DEBUG] scrapers-utils cargado desde raíz');
+  console.log('✅ [DEBUG] scrapersUtils cargado');
 } catch (error) {
-  console.error('❌ [DEBUG] Error cargando scrapers-utils:', error.message);
+  console.error('❌ [DEBUG] Error cargando scrapersUtils:', error.message);
+  console.log('⚠️ [DEBUG] Usando funciones por defecto');
   cleanArray = (arr, max) => (arr || []).slice(0, max || 10);
   formatEngineApplication = text => text;
   formatEquipmentApplication = text => text;
@@ -50,7 +51,7 @@ try {
   generateDefaultDescription = (sku, family, duty) => `Filter ${sku} ${family} ${duty}`;
 }
 
-console.log('✅ [DEBUG] Todos los módulos procesados');
+console.log('✅ [DEBUG] Todos los módulos cargados');
 
 const OEM_MANUFACTURERS = [
   'CATERPILLAR', 'KOMATSU', 'CUMMINS', 'VOLVO', 'MACK', 'JOHN DEERE',
@@ -80,31 +81,12 @@ const FAMILY_RULES = {
 
 function isAlreadyCrossReference(query) {
   const q = query.toUpperCase().replace(/[-\s]/g, '');
-  
-  if (/^P\d{6}/.test(q)) {
-    return { brand: 'DONALDSON', duty: 'HD', partNumber: q };
-  }
-  
-  if (/^(PH|CA|CS|FS|CH|BG|G)\d{4,}/.test(q)) {
-    return { brand: 'FRAM', duty: 'LD', partNumber: q };
-  }
-  
-  if (/^CF\d{5}/.test(q)) {
-    return { brand: 'FRAM', duty: 'LD', partNumber: q };
-  }
-  
-  if (/^(LF|FF|AF|HF)\d{4,}/.test(q)) {
-    return { brand: 'FLEETGUARD', duty: 'HD', partNumber: q };
-  }
-  
-  if (/^(B|BT|PA)\d{3,}/.test(q)) {
-    return { brand: 'BALDWIN', duty: 'HD', partNumber: q };
-  }
-  
-  if (/^(CUK|CU)\d{4}/.test(q)) {
-    return { brand: 'MANN', duty: 'LD', partNumber: q };
-  }
-  
+  if (/^P\d{6}/.test(q)) return { brand: 'DONALDSON', duty: 'HD', partNumber: q };
+  if (/^(PH|CA|CS|FS|CH|BG|G)\d{4,}/.test(q)) return { brand: 'FRAM', duty: 'LD', partNumber: q };
+  if (/^CF\d{5}/.test(q)) return { brand: 'FRAM', duty: 'LD', partNumber: q };
+  if (/^(LF|FF|AF|HF)\d{4,}/.test(q)) return { brand: 'FLEETGUARD', duty: 'HD', partNumber: q };
+  if (/^(B|BT|PA)\d{3,}/.test(q)) return { brand: 'BALDWIN', duty: 'HD', partNumber: q };
+  if (/^(CUK|CU)\d{4}/.test(q)) return { brand: 'MANN', duty: 'LD', partNumber: q };
   return null;
 }
 
@@ -118,10 +100,8 @@ function detectFamily(query) {
 
 function detectDuty(query, family) {
   const q = query.toUpperCase();
-  
   const crossRef = isAlreadyCrossReference(q);
   if (crossRef) return crossRef.duty;
-  
   if (OEM_MANUFACTURERS.some(m => q.includes(m))) return 'HD';
   if (['TOYOTA', 'FORD', 'NISSAN', 'MAZDA', 'LEXUS', 'BMW', 'MERCEDES', 'AUDI', 'PORSCHE', 'VOLKSWAGEN'].some(m => q.includes(m))) return 'LD';
   if (['KIT_DIESEL', 'HYDRAULIC', 'TURBINE', 'AIR_DRYER'].includes(family)) return 'HD';
@@ -130,10 +110,8 @@ function detectDuty(query, family) {
 
 function detectSource(query) {
   const q = query.toUpperCase();
-  
   const crossRef = isAlreadyCrossReference(q);
   if (crossRef) return crossRef.brand;
-  
   if (CROSS_MANUFACTURERS.some(m => q.includes(m))) return CROSS_MANUFACTURERS.find(m => q.includes(m));
   if (OEM_MANUFACTURERS.some(m => q.includes(m))) return OEM_MANUFACTURERS.find(m => q.includes(m));
   return 'GENERIC';
@@ -145,12 +123,10 @@ function extractPartNumber(query) {
     /\b\d{3,}[-]?\d{3,}[-]?\d{3,}\b/,
     /\b[A-Z]{2}\d{4,}\b/i,
   ];
-  
   for (const pattern of patterns) {
     const match = query.match(pattern);
     if (match) return match[0].replace(/\s/g, '');
   }
-  
   const fallback = query.match(/[A-Z0-9]{5,}/i);
   return fallback ? fallback[0] : query;
 }
@@ -158,7 +134,6 @@ function extractPartNumber(query) {
 function generateSkuFromPartNumber(family, partNumber) {
   const rule = FAMILY_RULES[family];
   if (!rule) return 'EXX0000';
-  
   const digits = partNumber.replace(/\D/g, '');
   const lastFour = digits.slice(-4).padStart(4, '0');
   return rule.prefix + lastFour;
@@ -172,9 +147,9 @@ async function detectFilter(queryRaw, sheetsInstance = null) {
   console.log(`\n🔵 ====== INICIO DETECCIÓN: ${queryRaw} ======`);
   
   try {
-    console.log('🔍 [1/10] Normalizando query...');
+    console.log('🔍 [1/10] Normalizando...');
     const query = normalizeQuery(queryRaw);
-    console.log(`✅ Query normalizada: "${query}"`);
+    console.log(`✅ Query: "${query}"`);
     
     console.log('🔍 [2/10] Detectando family...');
     const family = detectFamily(query);
@@ -184,46 +159,39 @@ async function detectFilter(queryRaw, sheetsInstance = null) {
     const duty = detectDuty(query, family);
     console.log(`✅ Duty: ${duty}`);
     
-    console.log('🔍 [4/10] Detectando source...');
     const source = detectSource(query);
-    console.log(`✅ Source: ${source}`);
-    
-    console.log('🔍 [5/10] Extrayendo part number...');
     const partNumber = extractPartNumber(query);
-    console.log(`✅ Part number: ${partNumber}`);
+    console.log(`✅ Part: ${partNumber}`);
     
     const directCross = isAlreadyCrossReference(query);
-    
-    let sku;
-    let homologatedCode;
-    let scraperData = null;
+    let sku, homologatedCode, scraperData = null;
     
     if (directCross) {
-      console.log(`✅ [6/10] Cross-reference directo: ${directCross.brand} ${directCross.partNumber}`);
+      console.log(`✅ [6/10] Cross directo: ${directCross.brand} ${directCross.partNumber}`);
       homologatedCode = directCross.partNumber;
       sku = generateSkuFromPartNumber(family, homologatedCode);
       
-      console.log('🌐 [7/10] Intentando scraping...');
+      console.log('🌐 [7/10] Scraping...');
       try {
         if (directCross.brand === 'DONALDSON' && getDonaldsonData) {
           const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 30000));
           scraperData = await Promise.race([getDonaldsonData(homologatedCode), timeout]);
-          console.log('✅ Scraping Donaldson OK');
+          console.log('✅ Scraping OK');
         } else if (directCross.brand === 'FRAM' && getFRAMData) {
           const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 30000));
           scraperData = await Promise.race([getFRAMData(homologatedCode), timeout]);
-          console.log('✅ Scraping FRAM OK');
+          console.log('✅ Scraping OK');
         }
       } catch (err) {
-        console.error('❌ Scraping falló:', err.message);
+        console.error('❌ Scraping error:', err.message);
       }
     } else {
-      console.log(`🔄 [6/10] Es OEM, buscando homologación...`);
+      console.log(`🔄 [6/10] OEM - buscando homologación...`);
       
       let equivalence = findEquivalence(partNumber, duty);
       
       if (equivalence) {
-        console.log(`✅ Equivalencia en DB: ${equivalence.brand} ${equivalence.partNumber}`);
+        console.log(`✅ DB: ${equivalence.brand} ${equivalence.partNumber}`);
         homologatedCode = equivalence.partNumber;
       } else {
         const sheets = sheetsInstance || _sheetsInstance;
@@ -233,38 +201,44 @@ async function detectFilter(queryRaw, sheetsInstance = null) {
             if (sheetsCross) {
               const targetPart = duty === 'HD' ? sheetsCross.donaldson : sheetsCross.fram;
               if (targetPart) {
-                console.log(`✅ Equivalencia en Sheets: ${targetPart}`);
+                console.log(`✅ Sheets: ${targetPart}`);
                 homologatedCode = targetPart;
               }
             }
           } catch (err) {
-            console.error('❌ Error Sheets:', err.message);
+            console.error('❌ Sheets error:', err.message);
           }
         }
       }
       
-      console.log('🌐 [7/10] Verificando scraping...');
+      console.log('🌐 [7/10] Web scraping...');
       if (!homologatedCode) {
         try {
           if (duty === 'HD' && getDonaldsonData) {
+            console.log('🔍 Scraping Donaldson...');
             const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 30000));
             const data = await Promise.race([getDonaldsonData(partNumber), timeout]);
             if (data && data.found) {
               homologatedCode = data.donaldson_code;
               scraperData = data;
-              console.log(`✅ Scraping Donaldson: ${homologatedCode}`);
+              console.log(`✅ Found: ${homologatedCode}`);
+            } else {
+              console.log('⚠️ Not found on Donaldson');
             }
           } else if (duty === 'LD' && getFRAMData) {
+            console.log('🔍 Scraping FRAM...');
             const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 30000));
             const data = await Promise.race([getFRAMData(partNumber), timeout]);
             if (data && data.found) {
               homologatedCode = data.fram_code;
               scraperData = data;
-              console.log(`✅ Scraping FRAM: ${homologatedCode}`);
+              console.log(`✅ Found: ${homologatedCode}`);
+            } else {
+              console.log('⚠️ Not found on FRAM');
             }
           }
         } catch (err) {
-          console.error('❌ Scraping falló:', err.message);
+          console.error('❌ Scraping error:', err.message);
         }
       }
       
@@ -279,7 +253,7 @@ async function detectFilter(queryRaw, sheetsInstance = null) {
       }
     }
     
-    console.log('🔍 [9/10] Compilando resultado...');
+    console.log('🔍 [9/10] Compilando...');
     const result = {
       status: 'OK',
       from_cache: false,
@@ -299,7 +273,7 @@ async function detectFilter(queryRaw, sheetsInstance = null) {
       created_at: new Date().toISOString()
     };
     
-    console.log(`✅ [10/10] Completado: ${sku}`);
+    console.log(`✅ [10/10] DONE: ${sku}`);
     console.log(`🔵 ====== FIN DETECCIÓN ======\n`);
     
     return result;
@@ -327,6 +301,6 @@ async function detectFilter(queryRaw, sheetsInstance = null) {
   }
 }
 
-console.log('✅ [DEBUG] detectionService.js cargado OK');
+console.log('✅ [DEBUG] detectionService.js READY');
 
 module.exports = { detectFilter, setSheetsInstance };
