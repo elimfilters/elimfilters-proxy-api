@@ -81,7 +81,7 @@ const FAMILY_RULES = {
 function isAlreadyCrossReference(query) {
   const q = query.toUpperCase().replace(/[-\s]/g, '');
   if (/^(P|B|DB|DBC|X|L|E)\d{4,}/.test(q)) return { brand: 'DONALDSON', duty: 'HD', partNumber: q };
-  if (/^(PH|CA|CS|FS|CH|BG|G)\d{4,}/.test(q)) return { brand: 'FRAM', duty: 'LD', partNumber: q };
+  if (/^(PH|CA|CS|CF|FS|CH|BG|G)\d{3,}/.test(q)) return { brand: 'FRAM', duty: 'LD', partNumber: q };
   if (/^CF\d{5}/.test(q)) return { brand: 'FRAM', duty: 'LD', partNumber: q };
   if (/^(LF|FF|AF|HF)\d{4,}/.test(q)) return { brand: 'FLEETGUARD', duty: 'HD', partNumber: q };
   if (/^(B|BT|PA)\d{3,}/.test(q)) return { brand: 'BALDWIN', duty: 'HD', partNumber: q };
@@ -89,6 +89,4 @@ function isAlreadyCrossReference(query) {
   return null;
 }
 
-// ... resto del archivo continúa sin cambios relevantes
-
-module.exports = { detectFilter, setSheetsInstance };
+module.exports = { isAlreadyCrossReference, setSheetsInstance, OEM_MANUFACTURERS, CROSS_MANUFACTURERS, FAMILY_RULES };
