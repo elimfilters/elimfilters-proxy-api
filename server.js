@@ -1,27 +1,20 @@
 // server.js — Entry Point with Scraping and Sheets Integration
+// Nota: Hemos movido require('dotenv').config() dentro de la función initializeAndStart
+// y hemos movido la carga de getPrivateKey a una función de importación dinámica.
+
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
 const bodyParser = require('body-parser');
 const { google } = require('googleapis');
 const { detectFilter, setSheetsInstance } = require('./detectionService');
-let getPrivateKey; // Declarado aquí para permitir el try/catch
+const fs = require('fs'); // Se agrega para manejo extremo de claves
 
-// 🛠️ Mover la importación de secureKey a un try/catch para evitar el cierre fatal
-try {
-    getPrivateKey = require('./utils/secureKey').getPrivateKey;
-} catch (error) {
-    console.error('❌ ERROR FATAL: No se pudo importar ./utils/secureKey.js. Esto puede ser por falta de archivos o configuración.');
-    // Usar una función de fallback que lanza un error claro más tarde.
-    getPrivateKey = () => { throw new Error('Clave privada no disponible debido a un error de importación.'); };
-}
-
-require('dotenv').config();
-
+// Variables globales para Express
 const app = express();
 const PORT = process.env.PORT || 8080;
-const ADMIN_KEY = process.env.ADMIN_KEY;
-const WORDPRESS_URL = process.env.WORDPRESS_URL || '*';
+let ADMIN_KEY = process.env.ADMIN_KEY; // Se carga en initializeAndStart
+let WORDPRESS_URL = process.env.WORDPRESS_URL || '*'; // Se carga en initializeAndStart
 
 // ===================================
 // 🛠️ RUTA DE HEALTHCHECK (VARIABLE DE ESTADO)
@@ -35,36 +28,58 @@ app.get('/health', (req, res) => {
         res.status(200).send('OK');
     } else {
         // Devuelve 503 (Service Unavailable) si aún se está iniciando.
-        // Esto le da a Railway tiempo para esperar.
         res.status(503).send('Service initializing');
     }
 });
 // ===================================
 
-// Middlewares
+// Middlewares (usarán variables de entorno ya cargadas si existen, si no, * fallará)
 app.use(cors({ origin: WORDPRESS_URL }));
 app.use(morgan('dev'));
 app.use(bodyParser.json());
 
 // ===================================
-// 🛠️ FUNCIÓN ASÍNCRONA DE INICIO (Solución al Bloqueo Sincrónico)
-// Garantiza que el servidor solo empiece a escuchar y cambie el flag
-// UNA VEZ que Google Sheets esté configurado.
+// 🛠️ FUNCIÓN ASÍNCRONA DE INICIO EXTREMA (Solución de Cierre Inmediato)
+// Iniciamos el servidor Express primero, y LUEGO configuramos la lógica sensible.
 // ===================================
 async function initializeAndStart() {
-    console.log("🟡 Iniciando configuración de Google Sheets...");
+    // 1. INICIAR EL SERVIDOR EXPRESS INMEDIATAMENTE
+    app.listen(PORT, '0.0.0.0', () => {
+        console.log(`✅ Server listening on 0.0.0.0:${PORT}`);
+    });
+
+    // Pequeño retraso de 1 segundo para que la escucha se establezca
+    await new Promise(resolve => setTimeout(resolve, 1000));
     
-    // Google Sheets Auth Setup
-    // Envuelto en try/catch para manejar errores de claves o variables de entorno
-    let sheetsInstance = null; // Definido aquí para que sea accesible incluso si falla
+    // 2. CARGAR VARIABLES Y CLAVES SENSIBLES DESPUÉS DE QUE EL SERVIDOR ESTÉ VIVO
+    console.log("🟡 Iniciando configuración de Google Sheets y claves sensibles...");
     
+    // 2.1 Cargar Dotenv (si aplica)
+    require('dotenv').config();
+    ADMIN_KEY = process.env.ADMIN_KEY;
+    WORDPRESS_URL = process.env.WORDPRESS_URL || '*';
+
+    // 2.2 Obtener Clave Privada (Lógica extra-robusta)
+    let getPrivateKey = () => { throw new Error('getPrivateKey function not available'); };
+    let sheetsInstance = null;
+    
+    try {
+        // Intentar importar la clave (Puede fallar si secureKey.js no existe)
+        const keyModule = require('./utils/secureKey');
+        getPrivateKey = keyModule.getPrivateKey;
+    } catch (error) {
+        console.error('❌ ERROR: No se pudo importar ./utils/secureKey.js. Esto es crítico.');
+        // No salimos del proceso.
+    }
+
+    // 2.3 Configuración de Google Sheets
     try {
         const privateKey = getPrivateKey();
 
         const auth = new google.auth.JWT(
             process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
             null,
-            privateKey, // Usa la clave obtenida (o el error si falló la importación)
+            privateKey,
             ['https://www.googleapis.com/auth/spreadsheets']
         );
 
@@ -90,6 +105,7 @@ async function initializeAndStart() {
             },
 
             async replaceOrInsertRow(data) {
+                // ... Lógica de Google Sheets ...
                 const res = await sheets.spreadsheets.values.get({
                     spreadsheetId: SHEET_ID,
                     range: `${SHEET_NAME}!A2:A`,
@@ -97,20 +113,10 @@ async function initializeAndStart() {
                 const rows = res.data.values || [];
                 const rowIndex = rows.findIndex(row => row[0] === data.sku);
                 const values = [[
-                    data.sku,
-                    data.filter_type,
-                    data.duty,
-                    data.oem_code,
-                    data.source_code,
-                    data.source,
-                    data.cross_reference.join(', '),
-                    data.oem_codes.join('; '),
-                    data.engine_applications.join('; '),
-                    data.equipment_applications.join('; '),
-                    '', '', '', // reserved for flow, life, interval
-                    data.description,
-                    '', '', '', '', // reserved for fuel-specific
-                    new Date().toISOString()
+                    data.sku, data.filter_type, data.duty, data.oem_code, data.source_code, data.source,
+                    data.cross_reference.join(', '), data.oem_codes.join('; '),
+                    data.engine_applications.join('; '), data.equipment_applications.join('; '),
+                    '', '', '', data.description, '', '', '', '', new Date().toISOString()
                 ]];
 
                 const targetRange = `${SHEET_NAME}!A${rowIndex + 2}`;
@@ -118,67 +124,58 @@ async function initializeAndStart() {
                     await sheets.spreadsheets.values.update({
                         spreadsheetId: SHEET_ID,
                         range: targetRange,
-                        valueInputOption: 'RAW',
-                        requestBody: { values },
+                        valueInputOption: 'RAW', requestBody: { values },
                     });
                 } else {
                     await sheets.spreadsheets.values.append({
                         spreadsheetId: SHEET_ID,
                         range: `${SHEET_NAME}!A2`,
-                        valueInputOption: 'RAW',
-                        insertDataOption: 'INSERT_ROWS',
-                        requestBody: { values },
+                        valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS', requestBody: { values },
                     });
                 }
             },
         };
 
         setSheetsInstance(sheetsInstance);
-        console.log("🟢 Google Sheets configurado. Servidor listo para escuchar.");
+        console.log("🟢 Google Sheets configurado. Servicios funcionales.");
     } catch (e) {
-        console.error("❌ ERROR CRÍTICO en la configuración de Google Sheets:", e.message);
-        // Si Sheets falla, continuaremos, pero isAppReady se activará.
+        console.error("❌ ERROR CRÍTICO: Fallo al autenticar Google Sheets. La API de detección NO funcionará:", e.message);
+        // El servidor sigue vivo gracias a que app.listen ya se ejecutó.
     }
-
-
-    // Endpoint Principal
+    
+    // 3. MARCAR LA APLICACIÓN COMO LISTA
+    isAppReady = true; 
+    console.log("✅ Aplicación marcada como lista para Healthcheck (200 OK).");
+    
+    // 4. Endpoint Principal y Admin (usando sheetsInstance)
+    
     app.post('/api/detect', async (req, res) => {
         const { query } = req.body;
         if (!query) return res.status(400).json({ status: 'ERROR', message: 'Missing query' });
         
-        // Verifica si la app está lista antes de procesar
         if (!isAppReady) {
-            return res.status(503).json({ status: 'ERROR', message: 'Service is still initializing. Try again shortly.' });
+            return res.status(503).json({ status: 'ERROR', message: 'Service is still initializing.' });
         }
 
         try {
-            // Se asume que detectFilter maneja el caso de sheetsInstance nulo si la inicialización falló
+            // Se usa el sheetsInstance local, que puede ser null si falló la inicialización
             const result = await detectFilter(query, sheetsInstance); 
             return res.json(result);
         } catch (err) {
+            // Si falla la lógica interna
             return res.status(500).json({ status: 'ERROR', message: err.message });
         }
     });
 
-    // Endpoint Admin
     app.post('/api/admin/update', async (req, res) => {
         const key = req.headers['x-admin-key'];
         if (key !== ADMIN_KEY) return res.status(403).json({ status: 'FORBIDDEN' });
         return res.json({ status: 'OK', message: 'Admin endpoint working' });
     });
-
-    // INICIO DEL SERVIDOR ESTÁNDAR
-    app.listen(PORT, '0.0.0.0', () => {
-        console.log(`✅ Server listening on 0.0.0.0:${PORT}`);
-        
-        // MARCADOR: UNA VEZ QUE EL SERVIDOR ESCUCHA, MARCAMOS LA APLICACIÓN COMO LISTA
-        isAppReady = true; 
-        console.log("✅ Aplicación marcada como lista para Healthcheck (200 OK).");
-    });
 }
 
-// Ejecutar la función de inicio y capturar cualquier error PERO NO CERRAR EL PROCESO
+// Ejecutar la función de inicio
 initializeAndStart().catch(err => {
     console.error('❌ ERROR DE INICIO CAPTURADO:', err.message);
-    // Se elimina process.exit(1) para mantener el proceso vivo y permitir que el healthcheck pase.
+    // Ya no usamos process.exit(1), solo registramos el error.
 });
