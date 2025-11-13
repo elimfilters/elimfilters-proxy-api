@@ -14,12 +14,20 @@ const ADMIN_KEY = process.env.ADMIN_KEY;
 const WORDPRESS_URL = process.env.WORDPRESS_URL || '*';
 
 // ===================================
-// 🛠️ RUTA DE HEALTHCHECK (DEBE SER LA PRIMERA)
-// CRÍTICA: Responde 200 OK inmediatamente.
+// 🛠️ SOLUCIÓN FINAL DE HEALTHCHECK (VARIABLE DE ESTADO)
+// Bloqueamos el healthcheck hasta que la función asíncrona termine.
 // ===================================
+let isAppReady = false;
+
 app.get('/health', (req, res) => {
-    // Si el healthcheck funciona, significa que la aplicación está viva.
-    res.status(200).send('OK');
+    // Solo responde 200 OK si la inicialización asíncrona ha terminado.
+    if (isAppReady) {
+        res.status(200).send('OK');
+    } else {
+        // Devuelve 503 (Service Unavailable) si aún se está iniciando.
+        // Esto evita que Railway lo considere un fallo fatal, dándole tiempo.
+        res.status(503).send('Service initializing');
+    }
 });
 // ===================================
 
@@ -28,105 +36,122 @@ app.use(cors({ origin: WORDPRESS_URL }));
 app.use(morgan('dev'));
 app.use(bodyParser.json());
 
-
-// Google Sheets Auth Setup
-const auth = new google.auth.JWT(
-  process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-  null,
-  getPrivateKey(),
-  ['https://www.googleapis.com/auth/spreadsheets']
-);
-
-const sheets = google.sheets({ version: 'v4', auth });
-
-const SHEET_ID = process.env.GOOGLE_SHEETS_ID;
-const SHEET_NAME = process.env.SHEET_NAME || 'Master';
-
-// Sheets Helper Instance
-const sheetsInstance = {
-  async findCrossReference(oem) {
-    const res = await sheets.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: `${SHEET_NAME}!D2:G`,
-    });
-    const rows = res.data.values || [];
-    for (const row of rows) {
-      if (row.includes(oem)) {
-        return { donaldson: row[1], fram: row[2] };
-      }
-    }
-    return null;
-  },
-
-  async replaceOrInsertRow(data) {
-    const res = await sheets.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: `${SHEET_NAME}!A2:A`,
-    });
-    const rows = res.data.values || [];
-    const rowIndex = rows.findIndex(row => row[0] === data.sku);
-    const values = [[
-      data.sku,
-      data.filter_type,
-      data.duty,
-      data.oem_code,
-      data.source_code,
-      data.source,
-      data.cross_reference.join(', '),
-      data.oem_codes.join(', '),
-      data.engine_applications.join('; '),
-      data.equipment_applications.join('; '),
-      '', '', '', // reserved for flow, life, interval
-      data.description,
-      '', '', '', '', // reserved for fuel-specific
-      new Date().toISOString()
-    ]];
-
-    const targetRange = `${SHEET_NAME}!A${rowIndex + 2}`;
-    if (rowIndex >= 0) {
-      await sheets.spreadsheets.values.update({
-        spreadsheetId: SHEET_ID,
-        range: targetRange,
-        valueInputOption: 'RAW',
-        requestBody: { values },
-      });
-    } else {
-      await sheets.spreadsheets.values.append({
-        spreadsheetId: SHEET_ID,
-        range: `${SHEET_NAME}!A2`,
-        valueInputOption: 'RAW',
-        insertDataOption: 'INSERT_ROWS',
-        requestBody: { values },
-      });
-    }
-  },
-};
-
-setSheetsInstance(sheetsInstance);
-
-// Endpoint Principal
-app.post('/api/detect', async (req, res) => {
-  const { query } = req.body;
-  if (!query) return res.status(400).json({ status: 'ERROR', message: 'Missing query' });
-  try {
-    const result = await detectFilter(query, sheetsInstance);
-    return res.json(result);
-  } catch (err) {
-    return res.status(500).json({ status: 'ERROR', message: err.message });
-  }
-});
-
-// Endpoint Admin
-app.post('/api/admin/update', async (req, res) => {
-  const key = req.headers['x-admin-key'];
-  if (key !== ADMIN_KEY) return res.status(403).json({ status: 'FORBIDDEN' });
-  return res.json({ status: 'OK', message: 'Admin endpoint working' });
-});
-
 // ===================================
-// INICIO DEL SERVIDOR ESTÁNDAR (sin setTimeout)
+// 🛠️ FUNCIÓN ASÍNCRONA DE INICIO
+// Garantiza que el servidor solo empiece a escuchar y cambie el flag
+// UNA VEZ que Google Sheets esté configurado.
 // ===================================
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`✅ Server listening on 0.0.0.0:${PORT}`);
+async function initializeAndStart() {
+    console.log("🟡 Iniciando configuración de Google Sheets...");
+    
+    // Google Sheets Auth Setup
+    const auth = new google.auth.JWT(
+        process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+        null,
+        getPrivateKey(),
+        ['https://www.googleapis.com/auth/spreadsheets']
+    );
+
+    const sheets = google.sheets({ version: 'v4', auth });
+
+    const SHEET_ID = process.env.GOOGLE_SHEETS_ID;
+    const SHEET_NAME = process.env.SHEET_NAME || 'Master';
+
+    // Sheets Helper Instance (lógica completa omitida por brevedad en la explicación)
+    const sheetsInstance = {
+        async findCrossReference(oem) {
+            const res = await sheets.spreadsheets.values.get({
+                spreadsheetId: SHEET_ID,
+                range: `${SHEET_NAME}!D2:G`,
+            });
+            const rows = res.data.values || [];
+            for (const row of rows) {
+                if (row.includes(oem)) {
+                    return { donaldson: row[1], fram: row[2] };
+                }
+            }
+            return null;
+        },
+
+        async replaceOrInsertRow(data) {
+            const res = await sheets.spreadsheets.values.get({
+                spreadsheetId: SHEET_ID,
+                range: `${SHEET_NAME}!A2:A`,
+            });
+            const rows = res.data.values || [];
+            const rowIndex = rows.findIndex(row => row[0] === data.sku);
+            const values = [[
+                data.sku,
+                data.filter_type,
+                data.duty,
+                data.oem_code,
+                data.source_code,
+                data.source,
+                data.cross_reference.join(', '),
+                data.oem_codes.join(', '),
+                data.engine_applications.join('; '),
+                data.equipment_applications.join('; '),
+                '', '', '', // reserved for flow, life, interval
+                data.description,
+                '', '', '', '', // reserved for fuel-specific
+                new Date().toISOString()
+            ]];
+
+            const targetRange = `${SHEET_NAME}!A${rowIndex + 2}`;
+            if (rowIndex >= 0) {
+                await sheets.spreadsheets.values.update({
+                    spreadsheetId: SHEET_ID,
+                    range: targetRange,
+                    valueInputOption: 'RAW',
+                    requestBody: { values },
+                });
+            } else {
+                await sheets.spreadsheets.values.append({
+                    spreadsheetId: SHEET_ID,
+                    range: `${SHEET_NAME}!A2`,
+                    valueInputOption: 'RAW',
+                    insertDataOption: 'INSERT_ROWS',
+                    requestBody: { values },
+                });
+            }
+        },
+    };
+
+    setSheetsInstance(sheetsInstance);
+    console.log("🟢 Google Sheets configurado. Servidor listo para escuchar.");
+
+    // Endpoint Principal
+    app.post('/api/detect', async (req, res) => {
+        const { query } = req.body;
+        if (!query) return res.status(400).json({ status: 'ERROR', message: 'Missing query' });
+        try {
+            const result = await detectFilter(query, sheetsInstance);
+            return res.json(result);
+        } catch (err) {
+            return res.status(500).json({ status: 'ERROR', message: err.message });
+        }
+    });
+
+    // Endpoint Admin
+    app.post('/api/admin/update', async (req, res) => {
+        const key = req.headers['x-admin-key'];
+        if (key !== ADMIN_KEY) return res.status(403).json({ status: 'FORBIDDEN' });
+        return res.json({ status: 'OK', message: 'Admin endpoint working' });
+    });
+
+    // 1. INICIAR EL SERVIDOR
+    app.listen(PORT, '0.0.0.0', () => {
+        console.log(`✅ Server listening on 0.0.0.0:${PORT}`);
+        
+        // 2. UNA VEZ QUE EL SERVIDOR ESCUCHA, MARCAMOS LA APLICACIÓN COMO LISTA
+        isAppReady = true; 
+        console.log("✅ Aplicación marcada como lista para Healthcheck (200 OK).");
+    });
+}
+
+// Ejecutar la función de inicio y capturar cualquier error
+initializeAndStart().catch(err => {
+    console.error('❌ FATAL ERROR: No se pudo iniciar el servicio.', err);
+    process.exit(1);
 });
 // ===================================
