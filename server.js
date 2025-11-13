@@ -1,40 +1,4 @@
-// server.js — Entry Point with Scraping and Sheets Integration
-const express = require('express');
-const cors = require('cors');
-const morgan = require('morgan');
-const bodyParser = require('body-parser');
-const { google } = require('googleapis');
-const { detectFilter, setSheetsInstance } = require('./detectionService');
-const { getPrivateKey } = require('./utils/secureKey');
-require('dotenv').config();
-
-const app = express();
-const PORT = process.env.PORT || 8080;
-const ADMIN_KEY = process.env.ADMIN_KEY;
-const WORDPRESS_URL = process.env.WORDPRESS_URL || '*';
-
-// ===================================
-// 🛠️ RUTA DE HEALTHCHECK
-// CRÍTICA: Responde 200 OK inmediatamente.
-// ===================================
-app.get('/health', (req, res) => {
-    // Si el healthcheck funciona, significa que la aplicación está viva.
-    res.status(200).send('OK');
-});
-// ===================================
-
-// Middlewares
-app.use(cors({ origin: WORDPRESS_URL }));
-app.use(morgan('dev'));
-app.use(bodyParser.json());
-
-
-// Google Sheets Auth Setup
-const auth = new google.auth.JWT(
-  process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-  null,
-  getPrivateKey(),
-  ['https://www.googleapis.com/auth/spreadsheets']
+v  ['https://www.googleapis.com/auth/spreadsheets']
 );
 
 const sheets = google.sheets({ version: 'v4', auth });
