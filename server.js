@@ -1,4 +1,40 @@
-v  ['https://www.googleapis.com/auth/spreadsheets']
+// server.js — Entry Point with Scraping and Sheets Integration
+const express = require('express');
+const cors = require('cors');
+const morgan = require('morgan');
+const bodyParser = require('body-parser');
+const { google } = require('googleapis');
+const { detectFilter, setSheetsInstance } = require('./detectionService');
+const { getPrivateKey } = require('./utils/secureKey');
+require('dotenv').config();
+
+const app = express();
+const PORT = process.env.PORT || 8080;
+const ADMIN_KEY = process.env.ADMIN_KEY;
+const WORDPRESS_URL = process.env.WORDPRESS_URL || '*';
+
+// ===================================
+// 🛠️ RUTA DE HEALTHCHECK (DEBE SER LA PRIMERA)
+// CRÍTICA: Responde 200 OK inmediatamente.
+// ===================================
+app.get('/health', (req, res) => {
+    // Si el healthcheck funciona, significa que la aplicación está viva.
+    res.status(200).send('OK');
+});
+// ===================================
+
+// Middlewares
+app.use(cors({ origin: WORDPRESS_URL }));
+app.use(morgan('dev'));
+app.use(bodyParser.json());
+
+
+// Google Sheets Auth Setup
+const auth = new google.auth.JWT(
+  process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+  null,
+  getPrivateKey(),
+  ['https://www.googleapis.com/auth/spreadsheets']
 );
 
 const sheets = google.sheets({ version: 'v4', auth });
@@ -88,13 +124,9 @@ app.post('/api/admin/update', async (req, res) => {
 });
 
 // ===================================
-// 🛠️ SOLUCIÓN FINAL: Añadir un retraso de 4 segundos (4000ms)
-// Este retraso garantiza que el sistema operativo del contenedor esté listo
-// para la conexión antes de que se inicie la escucha del puerto.
+// INICIO DEL SERVIDOR ESTÁNDAR (sin setTimeout)
 // ===================================
-setTimeout(() => {
-    app.listen(PORT, '0.0.0.0', () => {
-        console.log(`✅ Server listening on 0.0.0.0:${PORT} after 4s delay.`);
-    });
-}, 4000); // Retraso de 4 segundos
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`✅ Server listening on 0.0.0.0:${PORT}`);
+});
 // ===================================
