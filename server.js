@@ -13,16 +13,28 @@ const PORT = process.env.PORT || 8080;
 const ADMIN_KEY = process.env.ADMIN_KEY;
 const WORDPRESS_URL = process.env.WORDPRESS_URL || '*';
 
+// Middlewares
 app.use(cors({ origin: WORDPRESS_URL }));
 app.use(morgan('dev'));
 app.use(bodyParser.json());
 
+// ===================================
+// 🛠️ CORRECCIÓN: RUTA DE HEALTHCHECK
+// Esta ruta es CRÍTICA y debe responder 200 OK inmediatamente.
+// La colocamos antes de la lógica pesada para asegurar una respuesta rápida.
+// ===================================
+app.get('/health', (req, res) => {
+    // Si llegamos aquí, el servidor Express está levantado y escuchando.
+    res.status(200).send('OK');
+});
+// ===================================
+
 // Google Sheets Auth Setup
 const auth = new google.auth.JWT(
-  process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-  null,
-  getPrivateKey(),
-  ['https://www.googleapis.com/auth/spreadsheets']
+  process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+  null,
+  getPrivateKey(),
+  ['https://www.googleapis.com/auth/spreadsheets']
 );
 
 const sheets = google.sheets({ version: 'v4', auth });
@@ -32,85 +44,91 @@ const SHEET_NAME = process.env.SHEET_NAME || 'Master';
 
 // Sheets Helper Instance
 const sheetsInstance = {
-  async findCrossReference(oem) {
-    const res = await sheets.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: `${SHEET_NAME}!D2:G`,
-    });
-    const rows = res.data.values || [];
-    for (const row of rows) {
-      if (row.includes(oem)) {
-        return { donaldson: row[1], fram: row[2] };
-      }
-    }
-    return null;
-  },
+  async findCrossReference(oem) {
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: SHEET_ID,
+      range: `${SHEET_NAME}!D2:G`,
+    });
+    const rows = res.data.values || [];
+    for (const row of rows) {
+      if (row.includes(oem)) {
+        return { donaldson: row[1], fram: row[2] };
+      }
+    }
+    return null;
+  },
 
-  async replaceOrInsertRow(data) {
-    const res = await sheets.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: `${SHEET_NAME}!A2:A`,
-    });
-    const rows = res.data.values || [];
-    const rowIndex = rows.findIndex(row => row[0] === data.sku);
-    const values = [[
-      data.sku,
-      data.filter_type,
-      data.duty,
-      data.oem_code,
-      data.source_code,
-      data.source,
-      data.cross_reference.join(', '),
-      data.oem_codes.join(', '),
-      data.engine_applications.join('; '),
-      data.equipment_applications.join('; '),
-      '', '', '', // reserved for flow, life, interval
-      data.description,
-      '', '', '', '', // reserved for fuel-specific
-      new Date().toISOString()
-    ]];
+  async replaceOrInsertRow(data) {
+    // ... (Lógica de Sheets omitida por brevedad, no se modificó)
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: SHEET_ID,
+      range: `${SHEET_NAME}!A2:A`,
+    });
+    const rows = res.data.values || [];
+    const rowIndex = rows.findIndex(row => row[0] === data.sku);
+    const values = [[
+      data.sku,
+      data.filter_type,
+      data.duty,
+      data.oem_code,
+      data.source_code,
+      data.source,
+      data.cross_reference.join(', '),
+      data.oem_codes.join(', '),
+      data.engine_applications.join('; '),
+      data.equipment_applications.join('; '),
+      '', '', '', // reserved for flow, life, interval
+      data.description,
+      '', '', '', '', // reserved for fuel-specific
+      new Date().toISOString()
+    ]];
 
-    const targetRange = `${SHEET_NAME}!A${rowIndex + 2}`;
-    if (rowIndex >= 0) {
-      await sheets.spreadsheets.values.update({
-        spreadsheetId: SHEET_ID,
-        range: targetRange,
-        valueInputOption: 'RAW',
-        requestBody: { values },
-      });
-    } else {
-      await sheets.spreadsheets.values.append({
-        spreadsheetId: SHEET_ID,
-        range: `${SHEET_NAME}!A2`,
-        valueInputOption: 'RAW',
-        insertDataOption: 'INSERT_ROWS',
-        requestBody: { values },
-      });
-    }
-  },
+    const targetRange = `${SHEET_NAME}!A${rowIndex + 2}`;
+    if (rowIndex >= 0) {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: SHEET_ID,
+        range: targetRange,
+        valueInputOption: 'RAW',
+        requestBody: { values },
+      });
+    } else {
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: SHEET_ID,
+        range: `${SHEET_NAME}!A2`,
+        valueInputOption: 'RAW',
+        insertDataOption: 'INSERT_ROWS',
+        requestBody: { values },
+      });
+    }
+  },
 };
 
 setSheetsInstance(sheetsInstance);
 
 // Endpoint Principal
 app.post('/api/detect', async (req, res) => {
-  const { query } = req.body;
-  if (!query) return res.status(400).json({ status: 'ERROR', message: 'Missing query' });
-  try {
-    const result = await detectFilter(query, sheetsInstance);
-    return res.json(result);
-  } catch (err) {
-    return res.status(500).json({ status: 'ERROR', message: err.message });
-  }
+  const { query } = req.body;
+  if (!query) return res.status(400).json({ status: 'ERROR', message: 'Missing query' });
+  try {
+    const result = await detectFilter(query, sheetsInstance);
+    return res.json(result);
+  } catch (err) {
+    return res.status(500).json({ status: 'ERROR', message: err.message });
+  }
 });
 
 // Endpoint Admin
 app.post('/api/admin/update', async (req, res) => {
-  const key = req.headers['x-admin-key'];
-  if (key !== ADMIN_KEY) return res.status(403).json({ status: 'FORBIDDEN' });
-  return res.json({ status: 'OK', message: 'Admin endpoint working' });
+  const key = req.headers['x-admin-key'];
+  if (key !== ADMIN_KEY) return res.status(403).json({ status: 'FORBIDDEN' });
+  return res.json({ status: 'OK', message: 'Admin endpoint working' });
 });
 
-app.listen(PORT, () => {
-  console.log(`✅ Server listening on port ${PORT}`);
+// ===================================
+// 🛠️ CORRECCIÓN: Escucha en 0.0.0.0
+// Es buena práctica explicitar 0.0.0.0 para entornos de contenedor
+// ===================================
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ Server listening on 0.0.0.0:${PORT}`);
 });
+// =====
