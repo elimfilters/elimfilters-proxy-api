@@ -13,21 +13,21 @@ const PORT = process.env.PORT || 8080;
 const ADMIN_KEY = process.env.ADMIN_KEY;
 const WORDPRESS_URL = process.env.WORDPRESS_URL || '*';
 
+// ===================================
+// 🛠️ RUTA DE HEALTHCHECK
+// CRÍTICA: Responde 200 OK inmediatamente.
+// ===================================
+app.get('/health', (req, res) => {
+    // Si el healthcheck funciona, significa que la aplicación está viva.
+    res.status(200).send('OK');
+});
+// ===================================
+
 // Middlewares
 app.use(cors({ origin: WORDPRESS_URL }));
 app.use(morgan('dev'));
 app.use(bodyParser.json());
 
-// ===================================
-// 🛠️ CORRECCIÓN: RUTA DE HEALTHCHECK
-// Esta ruta es CRÍTICA y debe responder 200 OK inmediatamente.
-// La colocamos antes de la lógica pesada para asegurar una respuesta rápida.
-// ===================================
-app.get('/health', (req, res) => {
-    // Si llegamos aquí, el servidor Express está levantado y escuchando.
-    res.status(200).send('OK');
-});
-// ===================================
 
 // Google Sheets Auth Setup
 const auth = new google.auth.JWT(
@@ -59,7 +59,6 @@ const sheetsInstance = {
   },
 
   async replaceOrInsertRow(data) {
-    // ... (Lógica de Sheets omitida por brevedad, no se modificó)
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: SHEET_ID,
       range: `${SHEET_NAME}!A2:A`,
@@ -125,10 +124,13 @@ app.post('/api/admin/update', async (req, res) => {
 });
 
 // ===================================
-// 🛠️ CORRECCIÓN: Escucha en 0.0.0.0
-// Es buena práctica explicitar 0.0.0.0 para entornos de contenedor
+// 🛠️ SOLUCIÓN FINAL: Añadir un retraso de 4 segundos (4000ms)
+// Este retraso garantiza que el sistema operativo del contenedor esté listo
+// para la conexión antes de que se inicie la escucha del puerto.
 // ===================================
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`✅ Server listening on 0.0.0.0:${PORT}`);
-});
-// =====
+setTimeout(() => {
+    app.listen(PORT, '0.0.0.0', () => {
+        console.log(`✅ Server listening on 0.0.0.0:${PORT} after 4s delay.`);
+    });
+}, 4000); // Retraso de 4 segundos
+// ===================================
