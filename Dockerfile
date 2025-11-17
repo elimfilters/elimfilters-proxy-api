@@ -21,3 +21,4 @@ EXPOSE 8080
 
 # Comando por defecto para iniciar la API
 CMD ["node", "server.js"]
+# Updated 2025-11-17
