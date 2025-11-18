@@ -1,84 +1,68 @@
-// dataAccess.js
-// Capa de acceso a datos - conecta con Google Sheets
-// v3.0.0
+// dataAccess.js - v3.0.0 (PRODUCTION READY)
+// Gestión de consultas a la Base de Datos Maestra (Homologación)
 
-const detectionService = require('./detectionService');
+const axios = require('axios');
 
-/**
- * Query the master database (Google Sheets)
- * @param {string} normalizedCode - Código OEM normalizado
- * @returns {Promise<Object|null>} Registro encontrado o null
- */
+const GOOGLE_SHEET_URL = process.env.GOOGLE_SHEET_URL;  
+const GOOGLE_SHEET_API_KEY = process.env.GOOGLE_SHEET_API_KEY;
+
 async function queryMasterDatabase(normalizedCode) {
-  try {
-    // Usar detectionService para buscar en Google Sheets
-    const result = await detectionService.lookupInSheets(normalizedCode);
-    
-    if (!result || !result.found) {
-      return null;
+    console.log(`[DB] Consultando MASTER DB por: ${normalizedCode}`);
+
+    try {
+        const url = `${GOOGLE_SHEET_URL}?key=${GOOGLE_SHEET_API_KEY}`;
+
+        const response = await axios.get(url, { timeout: 5000 });
+
+        if (!response.data || !response.data.values) {
+            console.log("[DB] ✗ Respuesta vacía de Sheets");
+            return null;
+        }
+
+        const rows = response.data.values;
+
+        // Encabezados
+        const headers = rows[0];
+        const dataRows = rows.slice(1);
+
+        // Buscar coincidencia
+        const match = dataRows.find(row => {
+            const obj = toObject(headers, row);
+
+            return (
+                obj.original_code?.toUpperCase() === normalizedCode ||
+                obj.cross_reference?.toUpperCase().includes(normalizedCode) ||
+                obj.oem_codes?.toUpperCase().includes(normalizedCode)
+            );
+        });
+
+        if (!match) {
+            console.log(`[DB] ✗ No match en la hoja de homologación`);
+            return null;
+        }
+
+        const result = toObject(headers, match);
+
+        console.log(`[DB] ✓ MATCH: ${result.original_code} → FAMILY ${result.filter_family}`);
+
+        return {
+            source: "MASTER_DB",
+            rawData: result
+        };
+
+    } catch (err) {
+        console.error("[DB ERROR] Error consultando Google Sheets:", err.message);
+        return null;
     }
-
-    // Retornar datos estructurados
-    return {
-      sku: result.sku || null,
-      oem_code: result.oem_code || normalizedCode,
-      family: result.family || null,
-      duty_level: result.duty || result.duty_level || null,
-      specs: result.specs || {},
-      cross_reference: result.cross_reference || [],
-      found: true,
-      source: 'google_sheets'
-    };
-
-  } catch (error) {
-    console.error('[DATA ACCESS] Error querying master database:', error.message);
-    throw error;
-  }
 }
 
-/**
- * Search multiple codes in master database
- * @param {Array<string>} codes - Lista de códigos a buscar
- * @returns {Promise<Array>} Resultados encontrados
- */
-async function searchMultipleCodes(codes) {
-  try {
-    const results = [];
-    
-    for (const code of codes) {
-      const result = await queryMasterDatabase(code);
-      if (result) {
-        results.push(result);
-      }
-    }
-    
-    return results;
-  } catch (error) {
-    console.error('[DATA ACCESS] Error searching multiple codes:', error.message);
-    throw error;
-  }
+// Convierte array en objeto con headers
+function toObject(headers, row) {
+    const obj = {};
+    headers.forEach((h, i) => obj[h] = row[i] || "");
+    return obj;
 }
-
-/**
- * Validate if code exists in database
- * @param {string} code - Código a validar
- * @returns {Promise<boolean>} true si existe
- */
-async function codeExists(code) {
-  try {
-    const result = await queryMasterDatabase(code);
-    return result !== null;
-  } catch (error) {
-    return false;
-  }
-}
-
-// ============================================================================
-// EXPORTACIONES
-// ============================================================================
 
 module.exports = {
-  queryMasterDatabase,
-  searchMultipleCodes,
-  codeExists
+    queryMasterDatabase
 };
