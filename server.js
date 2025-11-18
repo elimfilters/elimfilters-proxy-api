@@ -1,4 +1,4 @@
-// server.js v4.2.0 - COMPLETO CON TODAS LAS RUTAS
+// server.js v4.3.0 - FINAL COMPLETO
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -17,9 +17,7 @@ app.use(cors({
     'https://elimfilters.com',
     'https://www.elimfilters.com',
     'http://localhost:8000',
-    'http://localhost:3000',
-    'http://127.0.0.1:8000',
-    'http://127.0.0.1:3000'
+    'http://localhost:3000'
   ],
   credentials: true
 }));
@@ -33,12 +31,14 @@ const { detectFilter, setSheetsInstance } = require('./detectionService');
 // Inicializar Google Sheets
 const sheetsService = new GoogleSheetsService();
 
+console.log('🚀 [SERVER] Iniciando servidor v4.3...');
+
 // Health check
 app.get('/health', (req, res) => {
   res.status(200).send('OK');
 });
 
-// Ruta principal: Detect Filter
+// Ruta principal POST
 app.post('/api/detect-filter', async (req, res) => {
   try {
     const { q } = req.body;
@@ -46,44 +46,39 @@ app.post('/api/detect-filter', async (req, res) => {
     if (!q) {
       return res.status(400).json({ 
         status: 'ERROR',
-        message: 'Query parameter "q" is required',
-        example: { q: 'P551551' }
+        message: 'Query parameter "q" is required'
       });
     }
 
-    console.log(`\n🔍 [API] Query recibido: ${q}`);
+    console.log(`🔍 [API POST] Query: ${q}`);
 
-    // Verificar cache
     const cacheKey = `filter_${q.toUpperCase()}`;
     const cached = cache.get(cacheKey);
     
     if (cached) {
-      console.log(`✅ [API] Respuesta desde cache`);
+      console.log(`✅ [CACHE] Hit`);
       return res.json({ ...cached, from_cache: true });
     }
 
-    // Procesar con detectionService
     const result = await detectFilter(q, sheetsService);
     
-    // Guardar en cache si fue exitoso
     if (result.status === 'OK') {
       cache.set(cacheKey, result);
     }
 
-    console.log(`✅ [API] Respuesta: SKU=${result.sku}`);
+    console.log(`✅ [API POST] SKU: ${result.sku}`);
     res.json(result);
 
   } catch (error) {
-    console.error('❌ [API] Error:', error.message);
+    console.error('❌ [API POST] Error:', error.message);
     res.status(500).json({
       status: 'ERROR',
-      message: error.message,
-      query: req.body.q
+      message: error.message
     });
   }
 });
 
-// Ruta GET (opcional, para testing en navegador)
+// Ruta GET
 app.get('/api/detect-filter', async (req, res) => {
   try {
     const { q } = req.query;
@@ -91,38 +86,34 @@ app.get('/api/detect-filter', async (req, res) => {
     if (!q) {
       return res.status(400).json({ 
         status: 'ERROR',
-        message: 'Query parameter "q" is required',
+        message: 'Query parameter "q" required',
         example: '/api/detect-filter?q=P551551'
       });
     }
 
-    console.log(`\n🔍 [API GET] Query recibido: ${q}`);
+    console.log(`🔍 [API GET] Query: ${q}`);
 
-    // Verificar cache
     const cacheKey = `filter_${q.toUpperCase()}`;
     const cached = cache.get(cacheKey);
     
     if (cached) {
-      console.log(`✅ [API GET] Respuesta desde cache`);
       return res.json({ ...cached, from_cache: true });
     }
 
-    // Procesar
     const result = await detectFilter(q, sheetsService);
     
     if (result.status === 'OK') {
       cache.set(cacheKey, result);
     }
 
-    console.log(`✅ [API GET] Respuesta: SKU=${result.sku}`);
+    console.log(`✅ [API GET] SKU: ${result.sku}`);
     res.json(result);
 
   } catch (error) {
     console.error('❌ [API GET] Error:', error.message);
     res.status(500).json({
       status: 'ERROR',
-      message: error.message,
-      query: req.query.q
+      message: error.message
     });
   }
 });
@@ -130,23 +121,20 @@ app.get('/api/detect-filter', async (req, res) => {
 // Iniciar servidor
 async function startServer() {
   try {
-    // Inicializar Google Sheets
-    console.log('🟡 Iniciando configuración de Google Sheets...');
+    console.log('🟡 Iniciando Google Sheets...');
     await sheetsService.initialize();
     setSheetsInstance(sheetsService);
-    console.log('✅ Google Sheets inicializado correctamente');
+    console.log('✅ Google Sheets OK');
 
-    // Iniciar servidor
     app.listen(PORT, '0.0.0.0', () => {
-      console.log(`✅ Servidor corriendo en puerto ${PORT}`);
-      console.log(`✅ CORS habilitado para: https://elimfilters.com, https://www.elimfilters.com`);
-      console.log(`📡 Health check: http://localhost:${PORT}/health`);
-      console.log(`🔍 API endpoint POST: http://localhost:${PORT}/api/detect-filter`);
-      console.log(`🔍 API endpoint GET: http://localhost:${PORT}/api/detect-filter?q=XXXX`);
+      console.log(`✅ Servidor en puerto ${PORT}`);
+      console.log(`📡 POST: /api/detect-filter`);
+      console.log(`📡 GET:  /api/detect-filter?q=XXX`);
+      console.log(`📡 Health: /health`);
     });
 
   } catch (error) {
-    console.error('❌ ERROR CRÍTICO al iniciar servidor:', error.message);
+    console.error('❌ ERROR CRÍTICO:', error.message);
     process.exit(1);
   }
 }
