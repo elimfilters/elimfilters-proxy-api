@@ -1,7 +1,7 @@
-// detectionService.js v2.0.0 — CON SCRAPERS AXIOS + CHEERIO + GUARDADO EN SHEETS
+// detectionService.js v2.1.2 — PATRONES DONALDSON (HD) + FRAM (LD)
 let _sheetsInstance = null;
 
-console.log('🟢 [DEBUG] Iniciando carga de módulos v2.0...');
+console.log('🟢 [DEBUG] Iniciando carga de módulos v2.1.2...');
 
 const normalizeQuery = require('./utils/normalizeQuery');
 console.log('✅ [DEBUG] normalizeQuery cargado');
@@ -47,10 +47,10 @@ try {
   formatEngineApplication = text => text;
   formatEquipmentApplication = text => text;
   combineWithDefaults = (data) => data;
-  generateDefaultDescription = (sku, family, duty) => `Filter ${sku} ${family} ${duty}`;
+  generateDefaultDescription = (sku, family, duty) => `The ${sku} is a high-quality ${family} filter for heavy-duty applications, manufactured to OEM standards. / El ${sku} es un filtro de ${family} de alta calidad para aplicaciones de servicio pesado, fabricado bajo estándares OEM.`;
 }
 
-console.log('✅ [DEBUG] Todos los módulos v2.0 cargados');
+console.log('✅ [DEBUG] Todos los módulos v2.1.2 cargados');
 
 const OEM_MANUFACTURERS = [
   'CATERPILLAR', 'KOMATSU', 'CUMMINS', 'VOLVO', 'MACK', 'JOHN DEERE',
@@ -64,18 +64,99 @@ const CROSS_MANUFACTURERS = [
   'MAN', 'PARKER', 'HENGST', 'KNECHT', 'CHAMPION', 'MANN',
 ];
 
+// ============================================================================
+// REGLAS DE FAMILIA MEJORADAS v2.1.2
+// - DONALDSON (HD): P55, P52-P54, P60-P82, P16-P17, etc
+// - FRAM (LD): PH, CA, CF, G, FS
+// ============================================================================
 const FAMILY_RULES = {
-  AIR: { patterns: ['AIR', 'CA', 'CF', 'RS', 'EAF', 'P1', 'AF'], prefix: 'EA1' },
-  OIL: { patterns: ['OIL', '1R', 'PH', 'LF', 'B', 'BT'], prefix: 'EL8' },
-  FUEL: { patterns: ['FUEL', 'FF', 'FS', 'P77', 'P52'], prefix: 'EF9' },
-  CABIN: { patterns: ['CABIN', 'AC', 'A/C', 'CUK', 'CU'], prefix: 'EC1' },
-  HYDRAULIC: { patterns: ['HYDRAULIC', 'HF', 'H'], prefix: 'EH6' },
-  COOLANT: { patterns: ['COOLANT', 'REFRIGERANTE'], prefix: 'EW7' },
-  AIR_DRYER: { patterns: ['DRYER', 'SECANTE'], prefix: 'ED4' },
-  TURBINE: { patterns: ['TURBINA', 'PARKER'], prefix: 'ET9' },
-  HOUSING: { patterns: ['HOUSING', 'CARCASA'], prefix: 'EA2' },
-  KIT_DIESEL: { patterns: ['DIESEL KIT', 'KIT DIESEL'], prefix: 'EK5' },
-  KIT_GASOLINE: { patterns: ['GASOLINE KIT', 'KIT GASOLINA'], prefix: 'EK3' },
+  // FUEL - Combustible
+  FUEL: { 
+    patterns: ['FUEL', 'FF', 'FS'],
+    // Prefijos Donaldson para Fuel: P55xxxx
+    donaldsonPrefix: ['P55'],
+    // Prefijos FRAM para Fuel: Gxxxx, FSxxxx
+    framPrefix: ['G', 'FS'],
+    prefix: 'EF9' 
+  },
+  
+  // OIL - Aceite
+  OIL: { 
+    patterns: ['OIL', '1R', 'PH', 'LF', 'BT'],
+    // Prefijos Donaldson para Oil: P1xxxxx (excl P16/P17), P2xxxxx
+    donaldsonPrefix: ['P10', 'P11', 'P12', 'P13', 'P14', 'P15', 'P18', 'P19', 'P2'],
+    // Prefijos FRAM para Oil: PHxxxx
+    framPrefix: ['PH'],
+    prefix: 'EL8' 
+  },
+  
+  // AIR - Aire
+  AIR: { 
+    patterns: ['AIR', 'CA', 'CF', 'RS', 'EAF', 'AF'],
+    // Prefijos Donaldson para Air: P52xxxx, P53xxxx, P54xxxx, P6xxxxx, P7xxxxx, P8xxxxx
+    donaldsonPrefix: ['P52', 'P53', 'P54', 'P60', 'P61', 'P77', 'P78', 'P82'],
+    // Prefijos FRAM para Air: CAxxxx
+    framPrefix: ['CA'],
+    prefix: 'EA1' 
+  },
+  
+  // CABIN - Cabina
+  CABIN: { 
+    patterns: ['CABIN', 'AC', 'A/C', 'CUK', 'CU'],
+    // Prefijos Donaldson para Cabin: P8xxxxx podría compartirse con Air
+    donaldsonPrefix: [],
+    // Prefijos FRAM para Cabin: CFxxxxx
+    framPrefix: ['CF'],
+    prefix: 'EC1' 
+  },
+  
+  // HYDRAULIC - Hidráulico
+  HYDRAULIC: { 
+    patterns: ['HYDRAULIC', 'HF', 'H'],
+    // Prefijos Donaldson para Hydraulic: P16xxxxx, P17xxxxx
+    donaldsonPrefix: ['P16', 'P17'],
+    prefix: 'EH6' 
+  },
+  
+  // COOLANT - Refrigerante
+  COOLANT: { 
+    patterns: ['COOLANT', 'REFRIGERANTE', 'WF'],
+    donaldsonPrefix: [],
+    prefix: 'EW7' 
+  },
+  
+  // AIR_DRYER - Secante de Aire
+  AIR_DRYER: { 
+    patterns: ['DRYER', 'SECANTE'],
+    donaldsonPrefix: [],
+    prefix: 'ED4' 
+  },
+  
+  // TURBINE - Turbina
+  TURBINE: { 
+    patterns: ['TURBINA', 'PARKER'],
+    donaldsonPrefix: [],
+    prefix: 'ET9' 
+  },
+  
+  // HOUSING - Carcasa
+  HOUSING: { 
+    patterns: ['HOUSING', 'CARCASA'],
+    donaldsonPrefix: [],
+    prefix: 'EA2' 
+  },
+  
+  // KITS
+  KIT_DIESEL: { 
+    patterns: ['DIESEL KIT', 'KIT DIESEL'],
+    donaldsonPrefix: [],
+    prefix: 'EK5' 
+  },
+  KIT_GASOLINE: { 
+    patterns: ['GASOLINE KIT', 'KIT GASOLINA'],
+    donaldsonPrefix: [],
+    prefix: 'EK3' 
+  },
 };
 
 function isAlreadyCrossReference(query) {
@@ -89,11 +170,58 @@ function isAlreadyCrossReference(query) {
   return null;
 }
 
+/**
+ * Detecta familia (filter_type) del filtro
+ * v2.1.2: Incluye detección por prefijos Donaldson y FRAM
+ * 
+ * DONALDSON (HD):
+ *   P55xxxx → FUEL
+ *   P10-P15, P18-P19, P2xxxxx → OIL
+ *   P52, P53, P54, P60, P61, P77, P78, P82 → AIR
+ *   P16, P17 → HYDRAULIC
+ * 
+ * FRAM (LD):
+ *   G, FS → FUEL
+ *   PH → OIL
+ *   CA → AIR
+ *   CF → CABIN
+ */
 function detectFamily(query) {
-  const q = query.toUpperCase();
-  for (const [family, { patterns }] of Object.entries(FAMILY_RULES)) {
-    if (patterns.some(p => q.includes(p))) return family;
+  const q = query.toUpperCase().replace(/[-\s]/g, '');
+  
+  // PASO 1: Detectar por prefijos Donaldson
+  for (const [family, rules] of Object.entries(FAMILY_RULES)) {
+    if (rules.donaldsonPrefix && rules.donaldsonPrefix.length > 0) {
+      for (const prefix of rules.donaldsonPrefix) {
+        if (q.startsWith(prefix) && /^\d/.test(q.charAt(prefix.length))) {
+          console.log(`🎯 [DETECT] Donaldson ${prefix} → ${family}`);
+          return family;
+        }
+      }
+    }
   }
+  
+  // PASO 2: Detectar por prefijos FRAM
+  for (const [family, rules] of Object.entries(FAMILY_RULES)) {
+    if (rules.framPrefix && rules.framPrefix.length > 0) {
+      for (const prefix of rules.framPrefix) {
+        if (q.startsWith(prefix)) {
+          console.log(`🎯 [DETECT] FRAM ${prefix} → ${family}`);
+          return family;
+        }
+      }
+    }
+  }
+  
+  // PASO 3: Detectar por patrones genéricos
+  for (const [family, rules] of Object.entries(FAMILY_RULES)) {
+    if (rules.patterns.some(pattern => q.includes(pattern))) {
+      console.log(`🎯 [DETECT] Pattern → ${family}`);
+      return family;
+    }
+  }
+  
+  console.log(`⚠️ [DETECT] No match → UNKNOWN`);
   return 'UNKNOWN';
 }
 
@@ -104,7 +232,8 @@ function detectDuty(query, family) {
   if (OEM_MANUFACTURERS.some(m => q.includes(m))) return 'HD';
   if (['TOYOTA', 'FORD', 'NISSAN', 'MAZDA', 'LEXUS', 'BMW', 'MERCEDES', 'AUDI', 'PORSCHE', 'VOLKSWAGEN'].some(m => q.includes(m))) return 'LD';
   if (['KIT_DIESEL', 'HYDRAULIC', 'TURBINE', 'AIR_DRYER'].includes(family)) return 'HD';
-  return 'UNKNOWN';
+  if (/^P\d{6}/.test(q)) return 'HD';
+  return 'HD';
 }
 
 function detectSource(query) {
@@ -132,10 +261,19 @@ function extractPartNumber(query) {
 
 function generateSkuFromPartNumber(family, partNumber) {
   const rule = FAMILY_RULES[family];
-  if (!rule) return 'EXX0000';
+  if (!rule) {
+    console.log(`⚠️ [SKU] No rule for ${family} → EXX0000`);
+    return 'EXX0000';
+  }
   const digits = partNumber.replace(/\D/g, '');
+  if (digits.length === 0) {
+    console.log(`⚠️ [SKU] No digits → EXX0000`);
+    return 'EXX0000';
+  }
   const lastFour = digits.slice(-4).padStart(4, '0');
-  return rule.prefix + lastFour;
+  const sku = rule.prefix + lastFour;
+  console.log(`✅ [SKU] ${family} + ${lastFour} → ${sku}`);
+  return sku;
 }
 
 function setSheetsInstance(instance) {
@@ -143,7 +281,7 @@ function setSheetsInstance(instance) {
 }
 
 async function detectFilter(queryRaw, sheetsInstance = null) {
-  console.log(`\n🔵 ====== INICIO DETECCIÓN v2.0: ${queryRaw} ======`);
+  console.log(`\n🔵 ====== INICIO DETECCIÓN v2.1.2: ${queryRaw} ======`);
   
   try {
     console.log('🔍 [1/11] Normalizando...');
@@ -185,14 +323,12 @@ async function detectFilter(queryRaw, sheetsInstance = null) {
     } else {
       console.log(`🔄 [6/11] OEM - buscando homologación...`);
       
-      // NIVEL 1: DB local
       let equivalence = findEquivalence(partNumber, duty);
       
       if (equivalence) {
         console.log(`✅ DB: ${equivalence.brand} ${equivalence.partNumber}`);
         homologatedCode = equivalence.partNumber;
       } else {
-        // NIVEL 2: Google Sheets
         const sheets = sheetsInstance || _sheetsInstance;
         if (sheets) {
           try {
@@ -210,7 +346,7 @@ async function detectFilter(queryRaw, sheetsInstance = null) {
         }
       }
       
-      console.log('🌐 [7/11] Web scraping con Axios + Cheerio...');
+      console.log('🌐 [7/11] Web scraping...');
       if (!homologatedCode) {
         try {
           if (duty === 'HD' && getDonaldsonData) {
@@ -221,7 +357,7 @@ async function detectFilter(queryRaw, sheetsInstance = null) {
               scraperData = data;
               console.log(`✅ Found: ${homologatedCode}`);
             } else {
-              console.log('⚠️ Not found on Donaldson');
+              console.log('⚠️ Not found');
             }
           } else if (duty === 'LD' && getFRAMData) {
             console.log('🔍 Scraping FRAM...');
@@ -231,7 +367,7 @@ async function detectFilter(queryRaw, sheetsInstance = null) {
               scraperData = data;
               console.log(`✅ Found: ${homologatedCode}`);
             } else {
-              console.log('⚠️ Not found on FRAM');
+              console.log('⚠️ Not found');
             }
           }
         } catch (err) {
@@ -277,20 +413,19 @@ async function detectFilter(queryRaw, sheetsInstance = null) {
         await sheets.replaceOrInsertRow(result);
         console.log('✅ Guardado en Sheet Master');
       } catch (err) {
-        console.error('❌ Error guardando en Sheets:', err.message);
+        console.error('❌ Error guardando:', err.message);
       }
     } else {
-      console.log('⚠️ Sheets no disponible, no se guardó');
+      console.log('⚠️ Sheets no disponible');
     }
     
     console.log(`✅ [11/11] DONE: ${sku}`);
-    console.log(`🔵 ====== FIN DETECCIÓN v2.0 ======\n`);
+    console.log(`🔵 ====== FIN DETECCIÓN v2.1.2 ======\n`);
     
     return result;
     
   } catch (error) {
     console.error(`❌ ERROR CRÍTICO:`, error.message);
-    console.error('Stack:', error.stack);
     
     return {
       status: 'ERROR',
@@ -311,6 +446,6 @@ async function detectFilter(queryRaw, sheetsInstance = null) {
   }
 }
 
-console.log('✅ [DEBUG] detectionService.js v2.0 READY (con scrapers Axios + guardado en Sheets)');
+console.log('✅ [DEBUG] detectionService.js v2.1.2 READY (patrones Donaldson corregidos)');
 
 module.exports = { detectFilter, setSheetsInstance };
