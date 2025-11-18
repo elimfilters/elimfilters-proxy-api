@@ -1,142 +1,127 @@
-// server.js v4.3.0 - FINAL COMPLETO
+// server.js – ELIMFILTERS PROXY API – v4.0.0
+// Servidor Oficial de la API ELIMFILTERS
+// Optimizado para Railway, WordPress, n8n y ChipMaster
+
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const morgan = require('morgan');
-const NodeCache = require('node-cache');
+const compression = require('compression');
+const helmet = require('helmet');
+
+const filterProcessor = require('./filterProcessor');
+const jsonBuilder = require('./jsonBuilder');
+const homologationDB = require('./homologationDB');
+const googleSheetsConnector = require('./googleSheetsConnector');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// Cache (5 minutos)
-const cache = new NodeCache({ stdTTL: 300 });
+// ============================================================================
+// 1. Middlewares de seguridad y performance
+// ============================================================================
+app.use(cors({ origin: '*', methods: ['GET', 'POST'] }));
+app.use(express.json({ limit: '5mb' }));
+app.use(express.urlencoded({ extended: true }));
+app.use(helmet());
+app.use(compression());
 
-// Middlewares
-app.use(cors({
-  origin: [
-    'https://elimfilters.com',
-    'https://www.elimfilters.com',
-    'http://localhost:8000',
-    'http://localhost:3000'
-  ],
-  credentials: true
-}));
-app.use(express.json());
-app.use(morgan('dev'));
-
-// Importar servicios
-const GoogleSheetsService = require('./googleSheetsConnector');
-const { detectFilter, setSheetsInstance } = require('./detectionService');
-
-// Inicializar Google Sheets
-const sheetsService = new GoogleSheetsService();
-
-console.log('🚀 [SERVER] Iniciando servidor v4.3...');
-
-// Health check
+// ============================================================================
+// 2. Health Check (para Railway y Monitores)
+// ============================================================================
 app.get('/health', (req, res) => {
-  res.status(200).send('OK');
+    res.status(200).json({
+        status: "OK",
+        service: "ELIMFILTERS-PROXY-API",
+        timestamp: new Date().toISOString(),
+        version: "4.0.0"
+    });
 });
 
-// Ruta principal POST
-app.post('/api/detect-filter', async (req, res) => {
-  try {
-    const { q } = req.body;
-    
-    if (!q) {
-      return res.status(400).json({ 
-        status: 'ERROR',
-        message: 'Query parameter "q" is required'
-      });
+// ============================================================================
+// 3. Endpoint principal: Buscar filtros (WordPress, móvil, web, Telegram, etc.)
+// ============================================================================
+app.post('/api/v1/filters/search', async (req, res) => {
+    const { code } = req.body;
+
+    if (!code) {
+        return res.status(400).json({
+            ok: false,
+            error: "MISSING_CODE",
+            message: "Debe enviar un código OEM/Cross Reference."
+        });
     }
 
-    console.log(`🔍 [API POST] Query: ${q}`);
+    try {
+        const response = await filterProcessor.processFilterCode(code);
 
-    const cacheKey = `filter_${q.toUpperCase()}`;
-    const cached = cache.get(cacheKey);
-    
-    if (cached) {
-      console.log(`✅ [CACHE] Hit`);
-      return res.json({ ...cached, from_cache: true });
+        return res.status(200).json({
+            ok: true,
+            results: [response]
+        });
+
+    } catch (err) {
+        console.error('[ERROR /search]', err);
+
+        return res.status(err.status || 500).json(
+            err.safeErrorResponse || {
+                ok: false,
+                error: "UNKNOWN_ERROR",
+                message: "Error procesando la solicitud."
+            }
+        );
     }
-
-    const result = await detectFilter(q, sheetsService);
-    
-    if (result.status === 'OK') {
-      cache.set(cacheKey, result);
-    }
-
-    console.log(`✅ [API POST] SKU: ${result.sku}`);
-    res.json(result);
-
-  } catch (error) {
-    console.error('❌ [API POST] Error:', error.message);
-    res.status(500).json({
-      status: 'ERROR',
-      message: error.message
-    });
-  }
 });
 
-// Ruta GET
-app.get('/api/detect-filter', async (req, res) => {
-  try {
-    const { q } = req.query;
-    
-    if (!q) {
-      return res.status(400).json({ 
-        status: 'ERROR',
-        message: 'Query parameter "q" required',
-        example: '/api/detect-filter?q=P551551'
-      });
+// ============================================================================
+// 4. Endpoint para recargar BD desde Sheets manualmente (administración)
+// ============================================================================
+app.get('/api/v1/database/reload', async (req, res) => {
+    try {
+        const reloaded = await homologationDB.reloadDatabase();
+        res.json({
+            ok: true,
+            updated: reloaded,
+            message: "La Base de Datos de homologación fue recargada exitosamente."
+        });
+    } catch (err) {
+        console.error('[ERROR /database/reload]', err);
+        res.status(500).json({
+            ok: false,
+            error: "DB_RELOAD_FAILED",
+            message: "No se pudo recargar la base de datos."
+        });
     }
-
-    console.log(`🔍 [API GET] Query: ${q}`);
-
-    const cacheKey = `filter_${q.toUpperCase()}`;
-    const cached = cache.get(cacheKey);
-    
-    if (cached) {
-      return res.json({ ...cached, from_cache: true });
-    }
-
-    const result = await detectFilter(q, sheetsService);
-    
-    if (result.status === 'OK') {
-      cache.set(cacheKey, result);
-    }
-
-    console.log(`✅ [API GET] SKU: ${result.sku}`);
-    res.json(result);
-
-  } catch (error) {
-    console.error('❌ [API GET] Error:', error.message);
-    res.status(500).json({
-      status: 'ERROR',
-      message: error.message
-    });
-  }
 });
 
-// Iniciar servidor
-async function startServer() {
-  try {
-    console.log('🟡 Iniciando Google Sheets...');
-    await sheetsService.initialize();
-    setSheetsInstance(sheetsService);
-    console.log('✅ Google Sheets OK');
-
-    app.listen(PORT, '0.0.0.0', () => {
-      console.log(`✅ Servidor en puerto ${PORT}`);
-      console.log(`📡 POST: /api/detect-filter`);
-      console.log(`📡 GET:  /api/detect-filter?q=XXX`);
-      console.log(`📡 Health: /health`);
+// ============================================================================
+// 5. Endpoint de diagnóstico técnico (NO EXPONE reglas ni lógica interna)
+// ============================================================================
+app.get('/api/v1/system/info', (req, res) => {
+    res.status(200).json({
+        service: "ELIMFILTERS-PROXY-API",
+        engine: "FilterEngine v4.0.0",
+        processor: "FilterProcessor v3.0.0",
+        database: "Google Sheets (homologationDB)",
+        protections: "rulesProtection v2.2.4",
+        server_time: new Date().toISOString()
     });
+});
 
-  } catch (error) {
-    console.error('❌ ERROR CRÍTICO:', error.message);
-    process.exit(1);
-  }
-}
+// ============================================================================
+// 6. HOME PAGE
+// ============================================================================
+app.get('/', (req, res) => {
+    res.send(`
+        <h2>ELIMFILTERS Proxy API – v4.0.0</h2>
+        <p>Status: OK</p>
+        <p>Use /api/v1/filters/search para consultas.</p>
+        <code>POST { "code": "LF3620" }</code>
+    `);
+});
 
-startServer();
+// ============================================================================
+// 7. Iniciar servidor
+// ============================================================================
+app.listen(PORT, () => {
+    console.log(`🚀 ELIMFILTERS API running on port ${PORT}`);
+});
