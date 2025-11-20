@@ -1,81 +1,79 @@
 // ============================================================================
-// ELIMFILTERS — RULES PROTECTION v4.0 (OFICIAL)
-// Reglas maestras para prefijos, OEM/CROSS, validación de SKU.
+// ELIMFILTERS — RULES PROTECTION v3.0
+// Asegura que NO existan SKUs duplicados + valida consistencia del motor.
+// Este archivo protege la integridad del sistema antes de registrar un SKU.
 // ============================================================================
 
-// ============================================================================
-// PREFIJOS OFICIALES
-// ============================================================================
-const PREFIXES = {
-    AIR:           { HD: "EA1", LD: "EA1" },
-    OIL:           { HD: "EL8", LD: "EL8" },
-    FUEL:          { HD: "EF9", LD: "EF9" }, // ← CORREGIDO: también en LD (tu orden)
-    HYDRAULIC:     { HD: "EH6", LD: null },
-    CABIN:         { HD: "EC1", LD: "EC1" },
-    CARCAZAS:      { HD: "EA2", LD: null },
-    AIR_DRYER:     { HD: "ED4", LD: null },
-    COOLANT:       { HD: "EW7", LD: null },
-    FUEL_SEPARATOR:{ HD: "ES9", LD: null },
-    KITS_HD:       { HD: "EK5", LD: null },
-    KITS_LD:       { HD: null, LD: "EK6" }
-};
+/**
+ * Verifica que el SKU no exista previamente en la base de datos.
+ *
+ * @param {string} sku - SKU generado
+ * @param {object[]} db - Base de datos completa (array de registros)
+ * @returns {{valid: boolean, reason?: string}}
+ */
+function validateUniqueSKU(sku, db) {
+    const exists = db.some(r => r.sku === sku);
 
-// ============================================================================
-// OEM LIST OFICIAL
-// ============================================================================
-const OEM_BRANDS = [
-    "CATERPILLAR", "KOMATSU", "TOYOTA", "NISSAN", "JOHN DEERE",
-    "FORD", "VOLVO CE", "VOLVO TRUCKS", "KUBOTA", "HITACHI",
-    "CASE", "NEW HOLLAND", "CNH", "ISUZU", "HINO", "YANMAR",
-    "MITSUBISHI FUSO", "HYUNDAI", "SCANIA", "MERCEDES-BENZ",
-    "CUMMINS", "PERKINS", "DOOSAN", "MACK", "MAN", "RENAULT",
-    "DEUTZ", "DETROIT DIESEL", "INTERNATIONAL", "NAVISTAR"
-];
-
-// ============================================================================
-// CROSS / AFTERMARKET LIST OFICIAL
-// ============================================================================
-const CROSS_BRANDS = [
-    "DONALDSON", "FLEETGUARD", "PARKER", "RACOR", "MANN", "MANN+HUMMEL",
-    "BALDWIN", "WIX", "FRAM", "HENGST", "MAHLE", "KNECHT",
-    "BOSCH", "SAKURA", "LUBER-FINER", "SURE FILTERS",
-    "TECFIL", "HENGS", "PREMIUM FILTERS", "MILLAR FILTERS"
-];
-
-// ============================================================================
-// FUNCIONES DE CLASIFICACIÓN
-// ============================================================================
-function isOEM(brand) {
-    return OEM_BRANDS.includes(brand.toUpperCase());
-}
-
-function isCross(brand) {
-    return CROSS_BRANDS.includes(brand.toUpperCase());
-}
-
-// ============================================================================
-// OBTENER PREFIJO SEGÚN FAMILIA + DUTY
-// ============================================================================
-function getPrefix(family, duty) {
-    const fam = PREFIXES[family];
-    if (!fam) return null;
-    return fam[duty] || null;
-}
-
-// ============================================================================
-// VALIDACIÓN DE SKU NUEVOS
-// ============================================================================
-function validateNewSKU(prefix, last4) {
-    const sku = `${prefix}${last4}`;
-    if (!/^[A-Z0-9]{6,7}$/.test(sku)) {
-        throw new Error("INVALID_SKU_FORMAT");
+    if (exists) {
+        return {
+            valid: false,
+            reason: `SKU_DUPLICATED: El SKU '${sku}' ya existe en base de datos.`
+        };
     }
-    return sku;
+
+    return { valid: true };
+}
+
+/**
+ * Valida que exista familia, duty y prefijo correcto
+ */
+function validateStructuralFields(record) {
+    const required = ["family", "duty", "prefix"];
+
+    for (const field of required) {
+        if (!record[field] || record[field].trim() === "") {
+            return {
+                valid: false,
+                reason: `INVALID_STRUCTURE: Falta el campo requerido '${field}'.`
+            };
+        }
+    }
+
+    return { valid: true };
+}
+
+/**
+ * Protección para equivalencias múltiples:
+ * Confirma que la generación múltiple contenga información mínima válida.
+ */
+function validateMultiEquivalence(list) {
+    if (!Array.isArray(list) || list.length === 0) {
+        return {
+            valid: false,
+            reason: "INVALID_MULTI_EQUIVALENCE: La lista está vacía."
+        };
+    }
+
+    const invalid = list.some(item =>
+        !item.sku ||
+        !item.prefix ||
+        !item.last4 ||
+        !item.family ||
+        !item.duty
+    );
+
+    if (invalid) {
+        return {
+            valid: false,
+            reason: "INVALID_MULTI_EQUIVALENCE: Estructura incompleta."
+        };
+    }
+
+    return { valid: true };
 }
 
 module.exports = {
-    isOEM,
-    isCross,
-    getPrefix,
-    validateNewSKU
+    validateUniqueSKU,
+    validateStructuralFields,
+    validateMultiEquivalence
 };
