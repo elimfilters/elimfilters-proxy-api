@@ -1,130 +1,217 @@
 // ============================================================================
-// ELIMFILTERS — FILTER ENGINE v4.0 (FINAL)
-// Motor oficial con soporte para multi-equivalencias, prefijos correctos,
-// reglas HD/LD, Donaldson/Fram, OEM prioritario y SKU único por cada referencia.
+// ELIMFILTERS — FILTER ENGINE v3.0
+// Motor central de Construcción de SKU + Multi-Equivalencias
 // ============================================================================
 
 const detectionService = require("../services/detectionService");
 const filterProcessor = require("../processors/filterProcessor");
-const homologationDB = require("../services/homologationDB");
+const homologationDB = require("./homologationDB");
 const dataAccess = require("../services/dataAccess");
 const jsonBuilder = require("../utils/jsonBuilder");
 
 // ============================================================================
-// NORMALIZACIÓN
+// OEM LIST DEFINITIVO (OFICIAL ELIMFILTERS)
 // ============================================================================
-function normalizeInput(code) {
-    if (!code || typeof code !== "string") {
-        return "";
-    }
-    return code.trim().toUpperCase().replace(/\s+/g, "");
-}
+const OEM_LIST = [
+    "CATERPILLAR", "KOMATSU", "TOYOTA", "NISSAN", "JOHN DEERE", "FORD",
+    "VOLVO", "VOLVO CE", "VOLVO TRUCKS", "KUBOTA", "HITACHI", "CASE",
+    "NEW HOLLAND", "ISUZU", "HINO", "YANMAR", "MITSUBISHI FUSO",
+    "HYUNDAI", "SCANIA", "MERCEDES", "CUMMINS", "PERKINS",
+    "DOOSAN", "MACK", "MAN", "RENAULT TRUCKS", "DEUTZ", "DETROIT",
+    "INTERNATIONAL", "NAVISTAR"
+];
 
 // ============================================================================
-// PROCESADOR PRINCIPAL
+// PREFIJOS
 // ============================================================================
-async function processCode(inputCode) {
-    const normalized = normalizeInput(inputCode);
-    if (!normalized) {
-        return jsonBuilder.buildErrorResponse({
-            error: "EMPTY_CODE",
-            message: "Debe ingresar un código OEM, Cross Reference o SKU.",
-            ok: false
-        });
-    }
+const PREFIX_MAP = {
+    AIR: "EA1",
+    OIL: "EL8",
+    FUEL: "EF9",
+    HYDRAULIC: "EH6",
+    CABIN: "EC1",
+    CARCAZAS: "EA2",
+    AIRDRYER: "ED4",
+    COOLANT: "EW7",
+    FUELSEP: "ES9",
+    KITHD: "EK5",
+    KITLD: "EK6"
+};
 
-    console.log(`[ENGINE] Código recibido → ${normalized}`);
-
-    const detection = detectionService.detectCodeType(normalized);
-    console.log(`[ENGINE] Tipo detectado → ${detection.type}`);
-
-    switch (detection.type) {
-        case "SKU":
-            return processSKU(normalized);
-        case "OEM":
-            return processOEM(normalized);
+// ============================================================================
+// MEDIA TYPE
+// ============================================================================
+function resolveMedia(family) {
+    switch (family) {
+        case "AIR":
+        case "CARCAZAS":
+            return "MACROCORE™";
+        case "CABIN":
+            return "MICROKAPPA™";
         default:
-            return jsonBuilder.buildErrorResponse({
-                query_norm: normalized,
-                error: "UNRECOGNIZED_CODE",
-                message: "El código ingresado no coincide con ningún formato válido.",
-                ok: false
-            });
+            return "ELIMTEK™";
     }
 }
 
 // ============================================================================
-// MANEJO SKU DIRECTO
+// DETERMINAR SI ES OEM
 // ============================================================================
-async function processSKU(sku) {
-    console.log(`[ENGINE] Buscando por SKU directo → ${sku}`);
-
-    const record = await dataAccess.queryBySKU(sku);
-    if (!record) {
-        return jsonBuilder.buildErrorResponse({
-            query_norm: sku,
-            error: "SKU_NOT_FOUND",
-            message: `El SKU '${sku}' no existe en la base de datos.`,
-            ok: false
-        });
-    }
-    return jsonBuilder.buildStandardResponse(record);
+function isOEM(brand) {
+    if (!brand) return false;
+    const upper = brand.toUpperCase();
+    return OEM_LIST.includes(upper);
 }
 
 // ============================================================================
-// MANEJO OEM / CROSS (MULTI-SKU INCLUIDO)
+// NORMALIZAR CÓDIGO
 // ============================================================================
-async function processOEM(code) {
-    console.log(`[ENGINE] Procesando OEM/CROSS → ${code}`);
+function normalizeInput(str) {
+    if (!str || typeof str !== "string") return "";
+    return str.trim().toUpperCase().replace(/\s+/g, "");
+}
 
-    try {
-        const result = await filterProcessor.processFilterCode(code);
+// ============================================================================
+// EXTRAER MARCA DEL CÓDIGO OEM (Caterpillar, Komatsu, Toyota…)
+// ============================================================================
+function extractBrand(codeObj) {
+    if (!codeObj || !codeObj.brand) return null;
+    return codeObj.brand.toUpperCase();
+}
 
-        // Si es single-equivalencia → retornar normal
-        if (result.results.length === 1) {
-            console.log(`[ENGINE] Resultado simple → SKU ${result.results[0].sku}`);
-            return result;
-        }
+// ============================================================================
+// GENERAR 4 DÍGITOS BASE SEGÚN HD / LD
+// ============================================================================
+async function resolveLast4Digits(codeObj, duty, family) {
+    const brand = extractBrand(codeObj);
 
-        // Si hay múltiple equivalencias
-        console.log(`[ENGINE] MULTI-EQUIVALENCIA DETECTADA → ${result.results.length} SKUs generados`);
+    const is_oem = isOEM(brand);
 
-        // Registrar en base de datos de auditoría de multi-equivalencias
-        homologationDB.saveMultiEquivalence(
-            code,
-            result.results.map(e => e.sku)
-        );
+    // ===============================
+    // PRIORIDAD: DONALDSON (HD)
+    // ===============================
+    if (duty === "HD") {
+        const d = await filterProcessor.findDonaldson(codeObj.code);
+        if (d) return d.code.slice(-4); // OK
+        // Si no existe → usar OEM si es OEM
+        if (is_oem) return codeObj.code.replace(/\D/g, "").slice(-4);
+    }
 
-        return result;
+    // ===============================
+    // PRIORIDAD: FRAM (LD)
+    // ===============================
+    if (duty === "LD") {
+        const f = await filterProcessor.findFRAM(codeObj.code);
+        if (f) return f.code.slice(-4);
+        // Si no lo fabrica → usar últimos 4 OEM
+        return codeObj.code.replace(/\D/g, "").slice(-4);
+    }
 
-    } catch (err) {
-        if (err.status === 404) {
-            console.log(`[ENGINE] Código desconocido → se envía a homologación`);
-            homologationDB.saveUnknownCode(code);
+    // Fallback universal
+    return codeObj.code.replace(/\D/g, "").slice(-4);
+}
 
-            return jsonBuilder.buildErrorResponse({
-                query_norm: code,
-                error: "NOT_FOUND_SENT_TO_HOMOLOGATION",
-                message: `El código '${code}' no existe en la base de datos. Se envió a homologación.`,
-                ok: false
-            });
-        }
+// ============================================================================
+// CONSTRUIR UN SKU
+// ============================================================================
+function buildSKU(prefix, last4) {
+    return `${prefix}${last4}`;
+}
 
-        console.error(`[ENGINE] ERROR INTERNO`, err);
+// ============================================================================
+// PROCESAR CÓDIGO CON MULTI-EQUIVALENCIAS
+// ============================================================================
+async function processOEM(codeObj) {
+    const { code, brand, family, duty, equivalents } = codeObj;
 
+    const prefix = PREFIX_MAP[family];
+    const media = resolveMedia(family);
+
+    if (!prefix || !family) {
         return jsonBuilder.buildErrorResponse({
             query_norm: code,
-            error: "ENGINE_FAILURE",
-            message: "Error interno procesando el código.",
-            details: err.message || "Unknown internal error",
-            ok: false
+            error: "UNKNOWN_FAMILY",
+            message: `No se pudo clasificar familia para '${code}'`
         });
     }
+
+    // ========================================================================
+    // SI NO HAY EQUIVALENTES → envío a homologación
+    // ========================================================================
+    if (!equivalents || equivalents.length === 0) {
+        await homologationDB.saveUnknownCode(code);
+        return jsonBuilder.buildErrorResponse({
+            query_norm: code,
+            error: "NOT_FOUND_SENT_TO_HOMOLOGATION",
+            message: `No hay equivalentes para ${code}.`
+        });
+    }
+
+    // ========================================================================
+    // MULTI-EQUIVALENCIAS (GENERAR 1 SKU POR CADA EQUIVALENTE)
+    // ========================================================================
+    const results = [];
+
+    for (let eq of equivalents) {
+        const eq_last4 = await resolveLast4Digits(eq, duty, family);
+        const sku = buildSKU(prefix, eq_last4);
+
+        results.push({
+            primary: false,
+            brand: eq.brand,
+            cross: eq.code,
+            last4: eq_last4,
+            sku,
+            family,
+            duty,
+            media
+        });
+    }
+
+    // ========================================================================
+    // MARCAR PRIMARIO (SIEMPRE EL PRIMERO)
+    // ========================================================================
+    if (results.length > 0) {
+        results[0].primary = true;
+    }
+
+    // Guardar auditoría
+    homologationDB.saveMultiEquivalence(code, results);
+
+    // Respuesta final
+    return jsonBuilder.buildMultiSkuResponse({
+        query_norm: code,
+        family,
+        duty,
+        prefix,
+        media,
+        items: results
+    });
 }
 
 // ============================================================================
-// EXPORTS
+// PROCESO PRINCIPAL
 // ============================================================================
+async function processCode(input) {
+    const normalized = normalizeInput(input);
+
+    const detection = detectionService.detectCodeType(normalized);
+
+    if (detection.type === "SKU") {
+        return dataAccess.queryBySKU(normalized);
+    }
+
+    if (detection.type === "OEM") {
+        const codeObj = await filterProcessor.processFilterCode(normalized);
+        return processOEM(codeObj);
+    }
+
+    return jsonBuilder.buildErrorResponse({
+        query_norm: normalized,
+        error: "UNRECOGNIZED_CODE",
+        message: "Código no válido."
+    });
+}
+
 module.exports = {
     processCode
 };
