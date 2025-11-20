@@ -1,290 +1,165 @@
-// googleSheetsConnector.js v4.0.0 — CON GUARDADO COMPLETO
-require('dotenv').config();
-const { google } = require('googleapis');
+// ============================================================================
+// GOOGLE SHEETS CONNECTOR — ELIMFILTERS API
+// Lee / escribe en el MASTER DB y en UNKNOWN CODES.
+// ============================================================================
 
-class GoogleSheetsService {
-  constructor() {
-    this.sheets = null;
-    this.sheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID || process.env.GOOGLE_SHEETS_ID || '';
-    this.sheetName = process.env.SHEET_NAME || 'Master';
-  }
+const { google } = require("googleapis");
 
-  async initialize() {
-    try {
-      if (!process.env.GOOGLE_PRIVATE_KEY || !process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL) {
-        throw new Error('Faltan variables de entorno de Google');
-      }
+// ============================================================================
+// CONFIG
+// ============================================================================
+const SPREADSHEET_ID = "1ZYI5c0enkuvWAveu8HMaCUk1cek_VDrX8GtgKW7VP6U";
 
-      const privateKey = (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\\n/g, '\n');
+// Rango principal del Master Sheet
+const MASTER_RANGE = "MASTER!A:AZ";
 
-      const auth = new google.auth.JWT({
-        email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-        key: privateKey,
-        scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-      });
+// Sheet donde se guardan códigos desconocidos
+const UNKNOWN_RANGE = "UNKNOWN!A:A";
 
-      this.sheets = google.sheets({ version: 'v4', auth });
+// ============================================================================
+// AUTENTICACIÓN GOOGLE SERVICE ACCOUNT
+// ============================================================================
+const auth = new google.auth.GoogleAuth({
+  credentials: {
+    type: "service_account",
+    project_id: "elimfilters-railway",
+    client_email: "elimfilters-railway@gen-lang-client-0000922456.iam.gserviceaccount.com",
+    private_key: `-----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC4job4vYUaJw8v
+LOZQvjFzZCnsrwHOG/QBaxejVZ2B777lNaYpNIrsA68+0DaldLu2LbVrttkdp3w1
+6vqhkAYFE4fNiLhzCm9BQKN6tiVW0BbmzDjKmt5TW0MVTuHbDaOett+U4jWJYCUJ
+wF4J9I+vKnId2WKaImzERaaVBRcMzDJF4Ru2CjsTJipnZKfuxDwRg+1d8L/9nVIL
+qtxN+A97t3Bd/mg7xd9/x6SQVPxD/eS7SLKsFnlES2NyyAAGNYMt6yUh6vACF7WS
+eNHxdYoVVB8vH0qIvmfV/TRkAtQaKbEBaLc9AfFaA9mP/GDXjekwk+l60//pn4MN
+KzRZTC8/AgMBAAECggEAUw0wh/chUqeJGb2m12b/ceH9S9llgo7pu0mqFYKNos90
+pEkEQT631YXC8w1XyhVB87WWEqbyBXo9VzYrG1FopBgp4MBJ4NstPbwM1Ufqfaqe
+47W7SNFwgypqgchBswXsP5wj+Sfi17NAd6btqqU3k6gSOoR87sfXEmwVjrH/sW3d
+Io+jh9ZmhRu/nnflsUr0BtdfxIIhTF87gySXWXYugo9u3yLpJTAn86cFZygBA2al
+AwugQLEeib97lQKQCSPQ2Y+qqM3FraDw+u0e2+slZWiWI9j8NsZFfx9g2j7A9a4w
+oUE0gRG9CaX26X+UaZoW1QpVmL5xa7zG68L7RBxFoQKBgQD5hVGbqpIsBi7PdzM6
+tvEPtilduH/ntDY/YCYga8Qxle6C0WQ8i+5gYnJ0G64rbBjkwE29/Z3l7bgFomyY
+KwKxIeHu98TkRqDxlR4CXfpY6iQBCS9ubEiPA8NPHs1tDHccUnKCPjHxGZ4NoxM0
+J4PLaFSOa7heOlFvZI19ZgWf5QKBgQC9WVy4MZOAu32L8gmZlN9Qc49HtGyGFGnR
+IVyTEXrNd85DOBM9xpuOxonaMGl/HVcORVkFlok/mayhyzwCMeYamj/3Em4j8C7M
+6ggN9hJ++WpHougMB1QGrQg1q7WQ0caqE5pRuY8NzFVDrwz0oyLebGZKQwz13W40
+o6JpFA54UwKBgQDi6qtctbJY9wZ7BhxAuT5g23ijEra/MNRkrjv+IAM8VO2jammN
+5nPSk7UigknSk2vQHFKXBZ4jDBzeguffOr4n+HhPqmQUdWbITKQN4wlY8xXrGz9X
+XIJgDTwBKDIJidyIlTIt4AHrETD7leJQ+96PjUHYg34Xs1F7zCYgdDeJQQKBgQCV
+DPQs1nG7Q1u3vwaJjCQiC2V9V2yaOxV1F2LtLjRR635Fca3L0jx/ro+zXqqc8nal
++Db0bCSMGSdIkVgiji8JP+UcU7i5t4bPrWY7vzmeFC3ySC2L0nT1cF3nCcy6PDe7
+iATRUlVm0jNIPVLgfE6lcgUvbgqUvALVkv3042HkmwKBgFgK+JFv7mwQZdtvx3Xg
+ZXECtYvN/jNPaWGR1LQXN8qmTMUYG4kv0ZQ9G3+Ld4pkjH1HNsWH4Y8FwdkYdRiR
+fFN6OY+0vMDPrOT908NL+ksmHJ68Qefnec2bV36/Z67VEXNaoo1xdbCakvpjCbPq
+/OCZYggj+FkuRuySH8yEkO+n
+-----END PRIVATE KEY-----`
+  },
+  scopes: ["https://www.googleapis.com/auth/spreadsheets"]
+});
 
-      console.log('✅ Google Sheets conectado correctamente');
-    } catch (err) {
-      console.error('❌ Error inicializando Google Sheets:', err.message);
-      throw err;
-    }
-  }
+const sheetsClient = google.sheets({ version: "v4", auth });
 
-  async readRange(sheetId, range) {
-    try {
-      const response = await this.sheets.spreadsheets.values.get({
-        spreadsheetId: sheetId,
-        range,
-      });
-      return response.data.values;
-    } catch (error) {
-      console.error('Error al leer rango:', error.message);
-      return [];
-    }
-  }
+// ============================================================================
+// LEER TODAS LAS FILAS DEL MASTER
+// ============================================================================
+async function readAllRows() {
+  const res = await sheetsClient.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: MASTER_RANGE
+  });
 
-  /**
-   * Busca fila por query_norm - ACTUALIZADO con más campos
-   */
-  async findRowByQuery(query) {
-    if (!this.sheets || !this.sheetId) return null;
-    const range = `${this.sheetName}!A:Z`;
-    
-    try {
-      const rows = await this.readRange(this.sheetId, range);
-      if (!rows || rows.length === 0) return null;
-      
-      const headers = rows[0];
-      const idxQueryNorm = headers.indexOf('query_norm');
-      
-      if (idxQueryNorm === -1) return null;
-      
-      for (let i = 1; i < rows.length; i++) {
-        const r = rows[i];
-        if (r[idxQueryNorm] && r[idxQueryNorm].toString().toLowerCase() === query.toString().toLowerCase()) {
-          // Mapear todos los campos
-          const result = { found: true };
-          headers.forEach((header, index) => {
-            if (r[index] !== undefined && r[index] !== '') {
-              result[header] = r[index];
-            }
-          });
-          return result;
-        }
-      }
-      return null;
-    } catch (e) {
-      console.warn('GoogleSheetsService.findRowByQuery fallo:', e.message);
-      return null;
-    }
-  }
+  const [header, ...rows] = res.data.values;
+  if (!header) return [];
 
-  /**
-   * Busca cross-reference en tabla de equivalencias
-   */
-  async findCrossReference(partNumber) {
-    if (!this.sheets || !this.sheetId) return null;
-    const range = `${this.sheetName}!A:Z`;
-    
-    try {
-      const rows = await this.readRange(this.sheetId, range);
-      if (!rows || rows.length === 0) return null;
-      
-      const headers = rows[0];
-      const idxOem = headers.indexOf('oem_cod');
-      const idxDonaldson = headers.indexOf('donaldson_code');
-      const idxFram = headers.indexOf('fram_code');
-      const idxFamily = headers.indexOf('family');
-      
-      if (idxOem === -1) return null;
-      
-      for (let i = 1; i < rows.length; i++) {
-        const r = rows[i];
-        if (r[idxOem] && r[idxOem].toString().toLowerCase() === partNumber.toString().toLowerCase()) {
-          return {
-            donaldson: idxDonaldson !== -1 ? r[idxDonaldson] : null,
-            fram: idxFram !== -1 ? r[idxFram] : null,
-            family: idxFamily !== -1 ? r[idxFamily] : null
-          };
-        }
-      }
-      return null;
-    } catch (e) {
-      console.warn('GoogleSheetsService.findCrossReference fallo:', e.message);
-      return null;
-    }
-  }
-
-  /**
-   * Guarda o actualiza registro completo - ACTUALIZADO
-   */
-  async replaceOrInsertRow(data) {
-    if (!this.sheets || !this.sheetId) {
-      console.warn('⚠️ Sheets no inicializado, no se guardó');
-      return;
-    }
-    
-    try {
-      console.log('💾 Guardando en Sheet Master:', data.query_norm);
-      
-      const range = `${this.sheetName}!A:Z`;
-      const rows = await this.readRange(this.sheetId, range);
-      
-      if (!rows || rows.length === 0) {
-        console.error('❌ Sheet vacío o sin headers');
-        return;
-      }
-      
-      const headers = rows[0];
-      
-      // Preparar fila completa con TODOS los campos
-      const row = this.prepareCompleteRow(data, headers);
-      
-      // Buscar si ya existe
-      const idxQueryNorm = headers.indexOf('query_norm');
-      let rowIndex = -1;
-      
-      if (idxQueryNorm !== -1) {
-        for (let i = 1; i < rows.length; i++) {
-          if (rows[i][idxQueryNorm] && rows[i][idxQueryNorm].toString().toLowerCase() === data.query_norm?.toString().toLowerCase()) {
-            rowIndex = i + 1; // +1 porque Sheets es 1-indexed
-            break;
-          }
-        }
-      }
-      
-      if (rowIndex !== -1) {
-        // Actualizar fila existente
-        console.log(`📝 Actualizando fila ${rowIndex}`);
-        await this.sheets.spreadsheets.values.update({
-          spreadsheetId: this.sheetId,
-          range: `${this.sheetName}!A${rowIndex}:Z${rowIndex}`,
-          valueInputOption: 'RAW',
-          resource: { values: [row] }
-        });
-      } else {
-        // Insertar nueva fila
-        console.log(`➕ Insertando nueva fila`);
-        await this.sheets.spreadsheets.values.append({
-          spreadsheetId: this.sheetId,
-          range: `${this.sheetName}!A:Z`,
-          valueInputOption: 'RAW',
-          resource: { values: [row] }
-        });
-      }
-      
-      console.log('✅ Guardado exitoso en Sheet Master');
-      
-    } catch (error) {
-      console.error('❌ Error guardando en Sheet:', error.message);
-    }
-  }
-
-  /**
-   * Prepara fila completa mapeando todos los campos
-   */
-  prepareCompleteRow(data, headers) {
-    const row = new Array(headers.length).fill('');
-    
-    // Mapear cada header a su valor
-    headers.forEach((header, index) => {
-      const value = this.getFieldValue(data, header);
-      row[index] = value;
+  return rows.map((r, idx) => {
+    const obj = {};
+    header.forEach((h, i) => {
+      obj[h] = r[i] || "";
     });
-    
-    return row;
-  }
-
-  /**
-   * Obtiene valor de un campo del objeto data
-   */
-  getFieldValue(data, fieldName) {
-    // Campos simples
-    if (data[fieldName] !== undefined && data[fieldName] !== null) {
-      // Si es array, convertir a string separado por comas
-      if (Array.isArray(data[fieldName])) {
-        return data[fieldName].join(', ');
-      }
-      return String(data[fieldName]);
-    }
-    
-    // Campos de specs
-    if (fieldName in (data.specs || {})) {
-      return String(data.specs[fieldName] || '');
-    }
-    
-    // Mapeos especiales
-    const mappings = {
-      'donaldson_code': data.source_code && data.source === 'donaldson' ? data.source_code : '',
-      'fram_code': data.source_code && data.source === 'fram' ? data.source_code : '',
-      'oem_cod': data.oem_code || '',
-      'rated_flow_gpm': data.specs?.rated_flow_gpm || '',
-      'service_life_hours': data.specs?.service_life_hours || '',
-      'change_interval_km': data.specs?.change_interval_km || '',
-      'water_separation_efficiency_percent': data.specs?.water_separation_efficiency_percent || '',
-      'drain_type': data.specs?.drain_type || '',
-      'micron_rating': data.specs?.micron_rating || '',
-      'collapse_pressure_psi': data.specs?.collapse_pressure_psi || ''
-    };
-    
-    if (fieldName in mappings) {
-      return mappings[fieldName];
-    }
-    
-    return '';
-  }
-
-  /**
-   * Crear headers si no existen (útil para inicialización)
-   */
-  async ensureHeaders() {
-    if (!this.sheets || !this.sheetId) return;
-    
-    try {
-      const range = `${this.sheetName}!A1:Z1`;
-      const rows = await this.readRange(this.sheetId, range);
-      
-      if (!rows || rows.length === 0) {
-        // Sheet vacío - crear headers
-        const headers = [
-          'query_norm',
-          'sku',
-          'description',
-          'family',
-          'duty',
-          'oem_cod',
-          'donaldson_code',
-          'fram_code',
-          'source',
-          'cross_reference',
-          'oem_codes',
-          'engine_applications',
-          'equipment_applications',
-          'rated_flow_gpm',
-          'service_life_hours',
-          'change_interval_km',
-          'water_separation_efficiency_percent',
-          'drain_type',
-          'micron_rating',
-          'collapse_pressure_psi',
-          'created_at'
-        ];
-        
-        await this.sheets.spreadsheets.values.update({
-          spreadsheetId: this.sheetId,
-          range: range,
-          valueInputOption: 'RAW',
-          resource: { values: [headers] }
-        });
-        
-        console.log('✅ Headers creados en Sheet Master');
-      }
-    } catch (error) {
-      console.error('❌ Error creando headers:', error.message);
-    }
-  }
+    obj._rowIndex = idx + 2;
+    return obj;
+  });
 }
 
-module.exports = GoogleSheetsService;
+// ============================================================================
+// BUSCAR POR SKU
+// ============================================================================
+async function findRowBySKU(sku) {
+  const rows = await readAllRows();
+  return rows.find(r => r.sku === sku) || null;
+}
+
+// ============================================================================
+// BUSCAR POR OEM / CROSS
+// ============================================================================
+async function findRowByOEM(code) {
+  const rows = await readAllRows();
+  return (
+    rows.find(r =>
+      (r.oem_codes || "").toUpperCase().includes(code.toUpperCase()) ||
+      (r.cross_reference || "").toUpperCase().includes(code.toUpperCase())
+    ) || null
+  );
+}
+
+// ============================================================================
+// BUSCAR POR query_norm
+// ============================================================================
+async function findRowByQueryNorm(q) {
+  const rows = await readAllRows();
+  return rows.find(r => r.query_norm === q) || null;
+}
+
+// ============================================================================
+// INSERTAR NUEVA FILA
+// ============================================================================
+async function insertRow(record) {
+  await sheetsClient.spreadsheets.values.append({
+    spreadsheetId: SPREADSHEET_ID,
+    range: MASTER_RANGE,
+    valueInputOption: "USER_ENTERED",
+    requestBody: {
+      values: [Object.values(record)]
+    }
+  });
+}
+
+// ============================================================================
+// ACTUALIZAR FILA EXISTENTE
+// ============================================================================
+async function updateRow(rowIndex, record) {
+  await sheetsClient.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `MASTER!A${rowIndex}`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: {
+      values: [Object.values(record)]
+    }
+  });
+}
+
+// ============================================================================
+// GUARDAR CÓDIGO DESCONOCIDO
+// ============================================================================
+async function saveUnknownCode(code) {
+  await sheetsClient.spreadsheets.values.append({
+    spreadsheetId: SPREADSHEET_ID,
+    range: UNKNOWN_RANGE,
+    valueInputOption: "USER_ENTERED",
+    requestBody: {
+      values: [[code]]
+    }
+  });
+}
+
+// ============================================================================
+// EXPORTS
+// ============================================================================
+module.exports = {
+  readAllRows,
+  findRowBySKU,
+  findRowByOEM,
+  findRowByQueryNorm,
+  insertRow,
+  updateRow,
+  saveUnknownCode
+};
