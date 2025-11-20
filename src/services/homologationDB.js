@@ -1,43 +1,51 @@
 // ============================================================================
 // ELIMFILTERS — HOMOLOGATION DB v3.0
-// Registra códigos desconocidos para validación posterior
+// Registra códigos desconocidos para revisión manual.
 // ============================================================================
 
-const fs = require("fs");
 const path = require("path");
+const fs = require("fs");
 
-const HOMOLOGATION_FILE = path.join(__dirname, "..", "..", "data", "unknown_codes.json");
+const DB_PATH = path.join(__dirname, "../../data/homologation_unknown.json");
 
-// Asegurar que el archivo exista
+// Crear archivo si no existe
 function ensureFile() {
-    if (!fs.existsSync(path.dirname(HOMOLOGATION_FILE))) {
-        fs.mkdirSync(path.dirname(HOMOLOGATION_FILE), { recursive: true });
-    }
-    if (!fs.existsSync(HOMOLOGATION_FILE)) {
-        fs.writeFileSync(HOMOLOGATION_FILE, JSON.stringify({ entries: [] }, null, 2));
+    if (!fs.existsSync(DB_PATH)) {
+        fs.writeFileSync(DB_PATH, JSON.stringify({ pending: [] }, null, 2));
     }
 }
 
-// Registrar código OEM desconocido
+function loadDB() {
+    ensureFile();
+    return JSON.parse(fs.readFileSync(DB_PATH));
+}
+
+function saveDB(db) {
+    fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2));
+}
+
+// Registrar código desconocido
 async function saveUnknownCode(code) {
-    try {
-        ensureFile();
-        const raw = fs.readFileSync(HOMOLOGATION_FILE, "utf8");
-        const json = JSON.parse(raw);
+    ensureFile();
+    const db = loadDB();
 
-        // Evitar duplicados
-        if (!json.entries.includes(code)) {
-            json.entries.push(code);
-        }
+    const normalized = String(code).trim().toUpperCase();
 
-        fs.writeFileSync(HOMOLOGATION_FILE, JSON.stringify(json, null, 2));
-        return true;
-    } catch (e) {
-        console.error("❌ Error guardando unknown code:", e.message);
-        return false;
+    // evitar duplicados
+    if (!db.pending.includes(normalized)) {
+        db.pending.push(normalized);
+        saveDB(db);
+        console.log(`📥 [HOMOLOGATION] Guardado para revisión → ${normalized}`);
     }
+}
+
+// Obtener lista
+function getPending() {
+    const db = loadDB();
+    return db.pending || [];
 }
 
 module.exports = {
-    saveUnknownCode
+    saveUnknownCode,
+    getPending
 };
