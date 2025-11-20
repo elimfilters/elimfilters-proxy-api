@@ -1,71 +1,74 @@
 // ============================================================================
-// ELIMFILTERS — DATA ACCESS v4.0
-// Acceso unificado al Sheet Master a través de GoogleSheetsConnector.
-// Provee:
-//   ✔ queryBySKU()
-//   ✔ queryByOEM()
-//   ✔ findRow()
-//   ✔ insertOrReplace()
+// ELIMFILTERS — DATA ACCESS v4.2
+// Acceso centralizado a los datos del Sheet Master y equivalencias.
 // ============================================================================
 
-const normalizeQuery = require("../utils/normalizeQuery");
-let sheetsInstance = null;
-
-// El motor asigna la instancia desde googleSheetsConnector.js
-function setSheetsInstance(instance) {
-    sheetsInstance = instance;
-}
+const sheets = require("./googleSheetsConnector");
+const homologationDB = require("./homologationDB");
 
 /**
- * Busca un SKU exacto
+ * Busca un SKU directamente en el Master.
+ * Devuelve:
+ *   - null si no existe
+ *   - objeto completo si existe
  */
 async function queryBySKU(sku) {
-    if (!sheetsInstance) throw new Error("Sheets instance not initialized");
+    if (!sku) return null;
 
-    const norm = normalizeQuery(sku);
-    const row = await sheetsInstance.findRowBySKU(norm);
+    try {
+        const instance = sheets.getInstance();
+        if (!instance) return null;
 
-    return row || null;
+        const queryNorm = sku.trim().toUpperCase();
+        const row = await instance.findRowByQuery(queryNorm);
+
+        if (!row || !row.found) return null;
+
+        return row;   
+    } catch (err) {
+        console.error("❌ queryBySKU error:", err);
+        return null;
+    }
 }
 
 /**
- * Busca un OEM exacto en la columna oem_number (o equivalentes)
+ * Carga equivalencias múltiples desde homologation_multi.json
+ * (Registro completo para debugging y reportes)
  */
-async function queryByOEM(oem) {
-    if (!sheetsInstance) throw new Error("Sheets instance not initialized");
-
-    const norm = normalizeQuery(oem);
-    const row = await sheetsInstance.findRowByOEM(norm);
-
-    return row || null;
+function loadMultiEquivalences() {
+    return homologationDB.loadMulti();
 }
 
 /**
- * Busca cualquier código (SKU, OEM, CROSS)
+ * Devuelve un objeto compacto con:
+ * - oem_codes[]
+ * - cross_reference[]
  */
-async function findRow(query) {
-    if (!sheetsInstance) throw new Error("Sheets instance not initialized");
+async function loadOEMandCross(queryNorm) {
+    try {
+        const instance = sheets.getInstance();
+        if (!instance) return { oem: [], cross: [] };
 
-    const norm = normalizeQuery(query);
+        const row = await instance.findRowByQuery(queryNorm);
+        if (!row || !row.found) return { oem: [], cross: [] };
 
-    const row = await sheetsInstance.findRowByQuery(norm);
+        const oem = Array.isArray(row.oem_codes)
+            ? row.oem_codes
+            : String(row.oem_codes || "").split(/[,\n\r]+/).filter(Boolean);
 
-    return row || null;
-}
+        const cross = Array.isArray(row.cross_reference)
+            ? row.cross_reference
+            : String(row.cross_reference || "").split(/[,\n\r]+/).filter(Boolean);
 
-/**
- * Insertar o actualizar fila
- */
-async function insertOrReplace(data) {
-    if (!sheetsInstance) throw new Error("Sheets instance not initialized");
-
-    return sheetsInstance.replaceOrInsertRow(data);
+        return { oem, cross };
+    } catch (err) {
+        console.error("❌ loadOEMandCross error:", err);
+        return { oem: [], cross: [] };
+    }
 }
 
 module.exports = {
-    setSheetsInstance,
     queryBySKU,
-    queryByOEM,
-    findRow,
-    insertOrReplace
+    loadMultiEquivalences,
+    loadOEMandCross
 };
