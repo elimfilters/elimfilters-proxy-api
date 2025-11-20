@@ -1,146 +1,191 @@
 // ============================================================================
-// ELIMFILTERS — BUSINESS LOGIC ENGINE v4.0
-// Lógica oficial para generar SKU único o múltiples SKU según equivalencias.
+// ELIMFILTERS — BUSINESS LOGIC v4.2
+// Motor de reglas central: prefijos, duty, familia, last4 y multi-SKU.
 // ============================================================================
 
-const rules = require("./rulesProtection");
-const homologationDB = require("./homologationDB");
-const jsonBuilder = require("../utils/jsonBuilder");
+const rulesProtection = require("./rulesProtection");
+const normalizeQuery = require("../utils/normalizeQuery");
 
-// Detecta si una marca es OEM o CROSS
-function classifyBrand(brand) {
-    if (rules.isOEM(brand)) return "OEM";
-    if (rules.isCross(brand)) return "CROSS";
-    return "UNKNOWN";
+// Media por familia
+const MEDIA_MAP = {
+    OIL: "ELIMTEK",
+    FUEL: "ELIMTEK",
+    HYDRAULIC: "ELIMTEK",
+    AIR: "MACROCORE",
+    "AIR DRYER": "MACROCORE",
+    CABIN: "MICROKAPPA",
+    CARCAZAS: "MACROCORE",
+    COOLANT: "ELIMTEK",
+    "FUEL SEPARATOR": "ELIMTEK"
+};
+
+// Familias por prefijo
+const FAMILY_MAP = {
+    EA1: "AIR",
+    EL8: "OIL",
+    EF9: "FUEL",
+    EH6: "HYDRAULIC",
+    EC1: "CABIN",
+    EA2: "CARCAZAS",
+    ED4: "AIR DRYER",
+    EW7: "COOLANT",
+    ES9: "FUEL SEPARATOR",
+    EK5: "KITS HD",
+    EK6: "KITS LD"
+};
+
+// Detecta familia aproximada por Donaldson
+function detectFamilyByDonaldson(code = "") {
+    const c = String(code).toUpperCase();
+
+    if (/^P[0-9]{5,6}$/.test(c)) return "OIL";
+    if (/^P5/.test(c)) return "OIL"; 
+    if (/^P1/.test(c)) return "AIR";
+    if (/^X/.test(c)) return "FUEL";
+    if (/^H/.test(c)) return "HYDRAULIC";
+
+    return "OIL";
 }
 
-// Normalización de código
-function normalize(code) {
-    return code.trim().toUpperCase().replace(/\s+/g, "");
+// Detecta duty
+function detectDuty(oemBrand = "") {
+    const b = oemBrand.toUpperCase();
+
+    const HD_LIST = [
+        "CATERPILLAR", "CAT",
+        "KOMATSU",
+        "JOHN DEERE",
+        "VOLVO", "VOLVO CE",
+        "HITACHI",
+        "CASE", "CNH",
+        "DOOSAN",
+        "MACK",
+        "SCANIA",
+        "MERCEDES-BENZ",
+        "ISUZU",
+        "HINO",
+        "PERKINS",
+        "DETROIT DIESEL",
+        "MAN"
+    ];
+
+    return HD_LIST.includes(b) ? "HD" : "LD";
 }
 
-// ============================================================================
-// REGLA BASE — Extraer los últimos 4 dígitos
-// ============================================================================
-function extractLast4(code) {
-    const digits = code.replace(/\D+/g, "");
-    return digits.slice(-4);
+// Prefijo por familia + duty
+function getPrefix(family, duty) {
+    return rulesProtection.getPrefix(family, duty);
 }
 
-// ============================================================================
-// GENERADOR PRINCIPAL DE UN SKU
-// ============================================================================
-function generateSingleSKU({ duty, family, baseCode }) {
-    const prefix = rules.getPrefix(family, duty);
-    if (!prefix) throw new Error("PREFIX_NOT_DEFINED_FOR_FAMILY_DUTY");
+// Últimos 4 — aplicando reglas globales
+function getLast4(oemCode, manufacturer, duty) {
+    const raw = oemCode.replace(/[^A-Z0-9]/g, "");
 
-    const last4 = extractLast4(baseCode);
-    return rules.validateNewSKU(prefix, last4);
-}
-
-// ============================================================================
-// MULTI-SKU ENGINE
-// ============================================================================
-// Aquí se generan TODOS los SKU cuando hay múltiples Donaldson/Fram equivalentes.
-function generateMultipleSKUs(oemCode, duty, family, refList) {
-    const prefix = rules.getPrefix(family, duty);
-    if (!prefix) throw new Error("PREFIX_NOT_DEFINED");
-
-    const list = [];
-
-    for (let ref of refList.slice(0, 10)) {
-        const last4 = extractLast4(ref);
-        const sku = rules.validateNewSKU(prefix, last4);
-
-        list.push({
-            sku,
-            last4_source: ref,
-            primary: false
-        });
+    if (manufacturer === "DONALDSON") {
+        return raw.slice(-4);
     }
 
-    // Marcar el PRIMARIO (primer equivalente)
-    if (list.length > 0) list[0].primary = true;
+    if (manufacturer === "FRAM") {
+        return raw.slice(-4);
+    }
 
-    // Guardar auditoría
-    homologationDB.saveMultiEquivalence(oemCode, list);
-
-    return list;
+    return raw.slice(-4);
 }
 
-// ============================================================================
-// LÓGICA COMPLETA DEL MOTOR DE SKU
-// ============================================================================
-function buildSKU(oemCode, brand, duty, family, equivalents) {
-    const cleanBrand = brand.toUpperCase();
-    const type = classifyBrand(cleanBrand);
+// Genera un SKU único
+function buildSKU(prefix, last4) {
+    return prefix + last4;
+}
 
-    const normalizedOEM = normalize(oemCode);
+// Determina media filtrante
+function getMedia(family) {
+    return MEDIA_MAP[family] || "ELIMTEK";
+}
 
-    // Si es OEM, prioridad absoluta: usar Donaldson/Fram
-    if (type === "OEM") {
-        if (equivalents.length === 0) {
-            // No existe en Donaldson/Fram → usar propios 4 dígitos OEM
-            const sku = generateSingleSKU({
-                duty,
-                family,
-                baseCode: normalizedOEM
-            });
-            return { primary: sku, list: [sku], multi: false };
-        }
+/**
+ * Construye una FILA COMPLETA lista para Google Sheets
+ */
+function buildMasterRow({
+    query_norm,
+    sku,
+    family,
+    duty,
+    oem,
+    crossList,
+    priorityBrand,
+    manufacturer,
+    last4,
+    prefix,
+    tech,
+    engineApps,
+    equipmentApps,
+    primary
+}) {
+    return {
+        query_norm,
+        sku,
+        homologated_sku: sku,
 
-        // Si hay muchos equivalentes → multi-SKU
-        if (equivalents.length > 1) {
-            const list = generateMultipleSKUs(normalizedOEM, duty, family, equivalents);
-            return {
-                primary: list[0].sku,
-                list: list.map(e => e.sku),
-                multi: true
-            };
-        }
-
-        // Solo 1 equivalente → SKU único
-        const single = generateSingleSKU({
-            duty,
-            family,
-            baseCode: equivalents[0]
-        });
-        return { primary: single, list: [single], multi: false };
-    }
-
-    // Si es CROSS / Aftermarket
-    if (type === "CROSS") {
-        // Donaldson o Fram es lo que define el SKU final
-        if (equivalents.length > 0) {
-            const sku = generateSingleSKU({
-                duty,
-                family,
-                baseCode: equivalents[0]
-            });
-            return { primary: sku, list: [sku], multi: false };
-        }
-
-        // No hay equivalentes → usar OEM más comercial
-        const sku = generateSingleSKU({
-            duty,
-            family,
-            baseCode: normalizedOEM
-        });
-        return { primary: sku, list: [sku], multi: false };
-    }
-
-    // Si es UNKNOWN → registrar para homologación
-    homologationDB.saveUnknownCode(normalizedOEM);
-
-    const fallback = generateSingleSKU({
-        duty,
         family,
-        baseCode: normalizedOEM
-    });
+        duty,
+        filter_type: FAMILY_MAP[prefix] || family,
+        subtype: "SPIN-ON",
 
-    return { primary: fallback, list: [fallback], multi: false };
+        description: `${family} filter for ${duty} duty applications. Premium media ${getMedia(family)}.`,
+
+        media_type: getMedia(family),
+
+        oem_codes: oem.join(","),
+        cross_reference: crossList.join(","),
+        priority_reference: primary ? "YES" : "",
+        priority_brand_reference: priorityBrand || "",
+        
+        manufactured_by: manufacturer,
+        source: manufacturer,
+        last4_source: priorityBrand,
+        last4_digits: last4,
+
+        engine_applications: engineApps.join("; "),
+        equipment_applications: equipmentApps.join("; "),
+
+        height_mm: tech.height || "",
+        outer_diameter_mm: tech.od || "",
+        gasket_od_mm: "",
+        gasket_id_mm: "",
+        thread_size: tech.thread || "",
+
+        micron_rating: tech.micron || "",
+        iso_main_efficiency_percent: "",
+        iso_test_method: "",
+        beta_200: "",
+        hydrostatic_burst_psi: "",
+        dirt_capacity_grams: "",
+        rated_flow_cfm: "",
+        rated_flow_gpm: tech.flow || "",
+
+        operating_pressure_min_psi: "",
+        operating_pressure_max_psi: "",
+        operating_temperature_min_c: "",
+        operating_temperature_max_c: "",
+        manufacturing_standards: "",
+        certification_standards: "",
+        fluid_compatibility: "",
+        disposal_method: "",
+        weight_grams: "",
+
+        review: "",
+        all_cross_references: crossList.join(","),
+
+        ok: true
+    };
 }
 
 module.exports = {
-    buildSKU
+    detectFamilyByDonaldson,
+    detectDuty,
+    getPrefix,
+    getLast4,
+    buildSKU,
+    getMedia,
+    buildMasterRow
 };
