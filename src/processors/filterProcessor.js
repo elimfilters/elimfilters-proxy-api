@@ -1,172 +1,203 @@
 // ============================================================================
-// ELIMFILTERS — FILTER PROCESSOR v3.0
-// Construye la fila completa con toda la metadata para Master Sheet
+// ELIMFILTERS — FILTER PROCESSOR V4.0
+// Motor principal encargado de generar SKUs, multi-equivalentes y datos limpios
 // ============================================================================
 
 const detectionService = require("../services/detectionService");
+const dataAccess = require("../services/dataAccess");
+const rules = require("../core/businessLogic");
+const jsonBuilder = require("../utils/jsonBuilder");
 
-// UTILIDAD: agrupar modelos repetidos
-function groupApplications(list) {
-  if (!Array.isArray(list) || list.length === 0) return "";
+// ============================================================================
+// PREFIJOS OFICIALES DEFINIDOS POR ELIMFILTERS
+// ============================================================================
 
-  const byBrand = {};
+const DUTY_PREFIX = {
+    AIR: { HD: "EA1", LD: "EA1" },
+    OIL: { HD: "EL8", LD: "EL8" },
+    FUEL: { HD: "EF9", LD: "EF9" },
+    HYDRAULIC: { HD: "EH6", LD: null },
+    CABIN: { HD: "EC1", LD: "EC1" },
+    AIR_DRYER: { HD: "ED4", LD: null },
+    COOLANT: { HD: "EW7", LD: null },
+    FUEL_SEPARATOR: { HD: "ES9", LD: null },
+    CARCAZAS: { HD: "EA2", LD: null },
+    KITS_HD: { HD: "EK5", LD: null },
+    KITS_LD: { HD: null, LD: "EK6" }
+};
 
-  list.forEach(entry => {
-    const [brand, model] = entry.split(" ", 2);
-    if (!byBrand[brand]) byBrand[brand] = [];
-    byBrand[brand].push(model);
-  });
-
-  return Object.entries(byBrand)
-    .map(([brand, models]) => `${brand} ${models.join(", ")}`)
-    .join(" | ");
-}
-
-// UTILIDAD: sanitizar OEM y CROSS
-function cleanList(raw) {
-  if (!raw) return "";
-  const arr = Array.isArray(raw) ? raw : String(raw).split(/[,;\n]+/);
-
-  const clean = arr
-    .map(v => String(v).trim().toUpperCase().replace(/[^A-Z0-9\-]/g, ""))
-    .filter(Boolean);
-
-  return clean.slice(0, 10).join(",");
+// ============================================================================
+// MEDIA TYPES OFICIALES
+// ============================================================================
+function resolveMediaType(family) {
+    switch (family) {
+        case "AIR":
+            return "Macrocore";
+        case "CABIN":
+            return "Microkappa";
+        default:
+            return "Elimtek";
+    }
 }
 
 // ============================================================================
-// PROCESADOR PRINCIPAL
+// OEM LISTA OFICIAL
+// ============================================================================
+const OEM_BRANDS = [
+    "CATERPILLAR", "KOMATSU", "TOYOTA", "NISSAN", "JOHN DEERE", "FORD",
+    "VOLVO", "KUBOTA", "HITACHI", "CASE", "ISUZU", "HINO", "YANMAR",
+    "MITSUBISHI", "HYUNDAI", "SCANIA", "MERCEDES", "CUMMINS", "PERKINS",
+    "DOOSAN", "MACK", "MAN", "RENAULT", "DEUTZ", "DETROIT", "INTERNATIONAL"
+];
+
+// ============================================================================
+// AFTERMARKET LISTA OFICIAL
+// ============================================================================
+
+const AFTERMARKET_BRANDS = [
+    "DONALDSON", "FLEETGUARD", "PARKER", "RACOR", "BALDWIN",
+    "MANN", "WIX", "FRAM", "HENGST", "MAHLE", "SAKURA",
+    "LUBER-FINER", "SURE FILTERS", "TECFIL", "BOSCH", "PREMIUM FILTERS"
+];
+
+// ============================================================================
+// NORMALIZA CADENA
+// ============================================================================
+function normalize(str) {
+    return (str || "").toUpperCase().trim();
+}
+
+// ============================================================================
+// CREAR SKU DESDE EQUIVALENTES
+// ============================================================================
+function buildSKU(prefix, base) {
+    return `${prefix}${base.padStart(4, "0")}`;
+}
+
+// ============================================================================
+// AGRUPA EQUIPMENT POR FABRICANTE
+// ============================================================================
+function groupEquipment(equipmentList) {
+    if (!Array.isArray(equipmentList) || equipmentList.length === 0) return [];
+
+    const map = {};
+
+    equipmentList.forEach(item => {
+        if (!item || !item.model) return;
+        const brand = normalize(item.brand);
+        if (!map[brand]) map[brand] = [];
+        map[brand].push(item.model);
+    });
+
+    const result = [];
+    for (const brand in map) {
+        result.push(`${brand}: ${map[brand].join(", ")}`);
+    }
+
+    return result;
+}
+
+// ============================================================================
+// PROCESAMIENTO PRINCIPAL
 // ============================================================================
 async function processFilterCode(code) {
-  const base = await detectionService.analyzeCode(code);  
-  const {
-    sku,
-    family,
-    duty,
-    media_type,
-    filter_type,
-    subtype,
-    prefix,
-    last4_digits
-  } = base;
+    const input = normalize(code);
 
-  // ------------------------------------------------------------
-  // OEM LIST (simulada en esta etapa)
-  // ------------------------------------------------------------
-  const oemList = [
-    `${code}`,
-    `${code}-A`,
-    `${code}-B`,
-    `${code}-C`
-  ];
+    // 1. Consultar equivalentes
+    const matches = await dataAccess.queryByOEMOrCross(input);
+    if (!matches || matches.length === 0) {
+        throw { status: 404, message: "CODE_NOT_FOUND" };
+    }
 
-  // ------------------------------------------------------------
-  // CROSS LIST simulada (1 a 10)
-  // ------------------------------------------------------------
-  const crossList = [
-    "P551807",
-    "LF691A",
-    "AF27891",
-    "BF7587",
-    "PH3950",
-    "CA9898"
-  ];
+    // Determinar si el input pertenece a OEM o Aftermarket
+    const isOEM = OEM_BRANDS.some(b =>
+        matches.some(m => m.brand && normalize(m.brand).includes(b))
+    );
 
-  // ------------------------------------------------------------
-  // ENGINE APPLICATIONS agrupado
-  // ------------------------------------------------------------
-  const engineAppsRaw = [
-    "CAT C7",
-    "CAT C9",
-    "CAT C13",
-    "Komatsu SAA6D102E",
-    "Komatsu SAA6D107E",
-    "John Deere 6068",
-    "John Deere 4045"
-  ];
+    // Familia / Duty se toma del equivalente primario
+    const primary = matches[0];
+    const family = normalize(primary.family);
+    const duty = normalize(primary.duty);
 
-  const engine_applications = groupApplications(engineAppsRaw);
+    const prefix = DUTY_PREFIX[family] && DUTY_PREFIX[family][duty];
+    if (!prefix) {
+        return jsonBuilder.buildErrorResponse({
+            query_norm: input,
+            error: "INVALID_PREFIX",
+            ok: false
+        });
+    }
 
-  // ------------------------------------------------------------
-  // EQUIPMENT APPLICATIONS agrupado + años
-  // ------------------------------------------------------------
-  const equipRaw = [
-    "CAT 320D (2006–2015)",
-    "CAT 420F (2012–2018)",
-    "CAT 950H (2007–2014)",
-    "Komatsu PC200-8 (2008–2015)",
-    "John Deere 544K (2010–2018)"
-  ];
+    // =====================================================================
+    // GENERAR BASES PARA CADA EQUIVALENTE
+    // =====================================================================
 
-  const equipment_applications = groupApplications(equipRaw);
+    const skuList = matches.map(m => {
+        let last4;
 
-  // ------------------------------------------------------------
-  // RESULTADO FINAL → FILA COMPLETA PARA MASTER SHEET
-  // ------------------------------------------------------------
-  const row = {
-    query_norm: code.toUpperCase(),
-    sku,
-    description: `${family} filter — ${sku}`,
-    family,
-    duty,
-    oem_codes: cleanList(oemList),
-    cross_reference: cleanList(crossList),
-    media_type,
-    filter_type,
-    subtype,
-    engine_applications,
-    equipment_applications,
+        // Regla HD
+        if (duty === "HD") {
+            // Donaldson si lo fabrica
+            if (m.cross_brand === "DONALDSON" && m.cross_part_number) {
+                last4 = m.cross_part_number.slice(-4);
+            } else {
+                // OEM si Donaldson no lo fabrica
+                last4 = input.slice(-4);
+            }
+        }
 
-    // Especificaciones genéricas (vacías)
-    height_mm: "",
-    outer_diameter_mm: "",
-    thread_size: "",
-    gasket_od_mm: "",
-    gasket_id_mm: "",
-    bypass_valve_psi: "",
-    micron_rating: "",
-    iso_main_efficiency_percent: "",
-    iso_test_method: "",
-    beta_200: "",
-    hydrostatic_burst_psi: "",
-    dirt_capacity_grams: "",
-    rated_flow_cfm: "",
-    rated_flow_gpm: "",
-    panel_width_mm: "",
-    panel_depth_mm: "",
-    manufacturing_standards: "",
-    certification_standards: "",
-    operating_pressure_min_psi: "",
-    operating_pressure_max_psi: "",
-    operating_temperature_min_c: "",
-    operating_temperature_max_c: "",
-    fluid_compatibility: "",
-    disposal_method: "",
-    weight_grams: "",
-    service_life_hours: "",
-    change_interval_km: "",
-    water_separation_efficiency_percent: "",
-    drain_type: "",
-    oem_number: "",
-    cross_brand: "",
-    cross_part_number: "",
-    manufactured_by: "",
-    last4_source: "OEM/CROSS",
-    last4_digits,
-    source: "ENGINE_V3",
-    homologated_sku: sku,
-    review: "",
-    all_cross_references: cleanList([...oemList, ...crossList]),
-    specs: "",
-    priority_reference: oemList[0],
-    priority_brand_reference: "OEM",
+        // Regla LD
+        else if (duty === "LD") {
+            // FRAM si lo fabrica
+            if (m.cross_brand === "FRAM" && m.cross_part_number) {
+                last4 = m.cross_part_number.slice(-4);
+            } else {
+                // OEM si FRAM no lo fabrica
+                last4 = input.slice(-4);
+            }
+        }
 
-    ok: true
-  };
+        return {
+            base: last4,
+            sku: buildSKU(prefix, last4),
+            brand: m.cross_brand,
+            part: m.cross_part_number,
+            isPrimary: false
+        };
+    });
 
-  return { results: [row] };
+    // ORDENAR y marcar PRIMARIO (el de menor número)
+    skuList.sort((a, b) => Number(a.base) - Number(b.base));
+    skuList[0].isPrimary = true;
+
+    const finalSKU = skuList[0].sku;
+
+    // =====================================================================
+    // GENERAR RESPUESTA FINAL
+    // =====================================================================
+
+    return jsonBuilder.buildStandardResponse({
+        queryNorm: input,
+        sku: finalSKU,
+        duty,
+        family,
+        mediaType: resolveMediaType(family),
+        oemCodes: [...new Set(matches.map(m => m.oem_code).filter(Boolean))],
+        crossReference: skuList.map(s => ({
+            brand: s.brand,
+            part: s.part,
+            sku: s.sku,
+            primary: s.isPrimary
+        })),
+        engineApplications: [...new Set(matches.flatMap(m => m.engine_app || []))],
+        equipmentApplications: groupEquipment(matches.flatMap(m => m.equipment_app || [])),
+        specs: primary.specs || {},
+        priority_reference: finalSKU,
+        ok: true
+    });
 }
 
-module.exports = {
-  processFilterCode
-};
+// ============================================================================
+// EXPORT
+// ============================================================================
+module.exports = { processFilterCode };
