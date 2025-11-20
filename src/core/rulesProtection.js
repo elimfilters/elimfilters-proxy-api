@@ -1,162 +1,123 @@
 // ============================================================================
-// ELIMFILTERS — RULES PROTECTION ENGINE v3.0
-// Valida formatos de códigos, protege integridad del motor y evita SKUs corruptos.
+// ELIMFILTERS — RULES PROTECTION v4.0
+// Valida: OEM vs CROSS, HD vs LD, familia, prefijo correcto y seguridad.
 // ============================================================================
 
-/**
- * Reglas de prefijos válidos según familia/duty.
- */
-const VALID_PREFIXES = [
-    "EL8", // OIL HD/LD
-    "EA1", // AIR HD/LD
-    "EF9", // FUEL HD/LD
-    "EC1", // CABIN HD/LD
-    "EH6", // HYDRAULIC HD
-    "EA2", // AIR HOUSINGS (Carcazas)
-    "ED4", // AIR DRYER
-    "EW7", // COOLANT
-    "ES9", // FUEL SEPARATOR
-    "EK5", // KITS HD
-    "EK6"  // KITS LD
-];
-
-/**
- * Formatos OEM reconocidos
- */
-const OEM_BRANDS = [
-    "CAT", "CATERPILLAR",
+// ============================================================================
+// LISTA OFICIAL DE OEM (máxima prioridad)
+// ============================================================================
+const OEM_LIST = [
+    "CATERPILLAR", "CAT",
     "KOMATSU",
     "TOYOTA", "NISSAN",
     "JOHN DEERE",
     "FORD",
-    "VOLVO", "VOLVO CE", "VOLVO TRUCKS",
+    "VOLVO CE", "VOLVO TRUCKS",
     "KUBOTA",
     "HITACHI",
-    "CASE", "CNH", "NEW HOLLAND",
+    "CASE", "NEW HOLLAND", "CNH",
     "ISUZU",
     "HINO",
     "YANMAR",
-    "MITSUBISHI", "FUSO",
-    "HYUNDAI",
+    "MITSUBISHI FUSO",
+    "HYUNDAI CONSTRUCTION",
     "SCANIA",
-    "MERCEDES",
-    "CUMMINS",
+    "MERCEDES-BENZ",
+    "CUMMINS",      // Solo OEM engine parts
     "PERKINS",
     "DOOSAN",
     "MACK",
     "MAN",
-    "RENAULT",
+    "RENAULT TRUCKS",
     "DEUTZ",
-    "DETROIT",
-    "INTERNATIONAL"
+    "DETROIT DIESEL",
+    "INTERNATIONAL", "NAVISTAR"
 ];
 
-/**
- * Patrones típicos de OEM (numeración extensa)
- */
-const OEM_REGEX = /^[A-Z0-9\-]{5,20}$/;
-
-/**
- * CROSS / AFTERMARKET brands
- */
-const AFTERMARKET_BRANDS = [
-    "DONALDSON",
+// ============================================================================
+// LISTA OFICIAL CROSS / AFTERMARKET
+// ============================================================================
+const CROSS_LIST = [
+    "DONALDSON",       // Premium aftermarket + OEM supplier
     "FLEETGUARD",
-    "PARKER",
-    "RACOR",
-    "MANN",
+    "PARKER", "RACCOR",
+    "MANN", "MANN+HUMMEL",
     "BALDWIN",
     "WIX",
     "FRAM",
     "HENGST",
-    "MAHLE",
-    "KNECHT",
+    "MAHLE", "KNECHT",
     "BOSCH",
     "SAKURA",
     "LUBER-FINER",
-    "TECFIL",
-    "HENGS",
-    "PREMIUM FILTERS",
-    "MILLAR"
+    "SURE FILTERS",
+    "TECfil",
+    "PREMIUN FILTERS",
+    "MILLAR FILTERS"
 ];
 
-/**
- * Detecta si un código tiene formato de SKU ELIMFILTERS
- */
-function isSKU(code) {
-    return VALID_PREFIXES.some(pref => code.startsWith(pref)) && /^[A-Z0-9]{6,10}$/.test(code);
+// ============================================================================
+// ASIGNACIÓN OFICIAL DE PREFIJOS
+// ============================================================================
+const PREFIX_RULES = {
+    AIR:        { HD: "EA1", LD: "EA1" },
+    OIL:        { HD: "EL8", LD: "EL8" },
+    FUEL:       { HD: "EF9", LD: "EF9" },
+    HYDRAULIC:  { HD: "EH6", LD: null },
+    CABIN:      { HD: "EC1", LD: "EC1" },
+    CARCAZA:    { HD: "EA2", LD: null },
+    AIR_DRYER:  { HD: "ED4", LD: null },
+    COOLANT:    { HD: "EW7", LD: null },
+    SEPARATOR:  { HD: "ES9", LD: null },
+    KITS_HD:    { HD: "EK5", LD: null },
+    KITS_LD:    { HD: null, LD: "EK6" }
+};
+
+// ============================================================================
+// IDENTIFICAR SI EL CÓDIGO ES OEM
+// ============================================================================
+function isOEM(brand) {
+    return OEM_LIST.includes(brand?.toUpperCase());
 }
 
-/**
- * Detecta si el código parece OEM real
- */
-function isOEM(code) {
-    if (!OEM_REGEX.test(code)) return false;
-    return true;
+// ============================================================================
+// IDENTIFICAR SI ES CROSS / AFTERMARKET
+// ============================================================================
+function isCross(brand) {
+    return CROSS_LIST.includes(brand?.toUpperCase());
 }
 
-/**
- * Detecta si es CROSS / AFTERMARKET
- */
-function isCross(code) {
-    // Tiene formato general pero no OEM => aftermarket
-    return OEM_REGEX.test(code);
+// ============================================================================
+// OBTENER PREFIJO SEGÚN FAMILIA & DUTY
+// ============================================================================
+function getPrefix(family, duty) {
+    const fam = PREFIX_RULES[family];
+    if (!fam) return null;
+    return fam[duty] || null;
 }
 
-/**
- * Detecta anomalías peligrosas
- */
-function detectAnomalies(input) {
-    const anomalies = [];
-
-    if (input.length < 3) {
-        anomalies.push("CODE_TOO_SHORT");
+// ============================================================================
+// VALIDAR PROTECCIÓN DEL SKU NUEVO
+// ============================================================================
+function validateNewSKU(prefix, last4) {
+    if (!/^[A-Z0-9]{2,3}$/.test(prefix)) {
+        throw new Error("INVALID_PREFIX");
     }
-    if (input.length > 30) {
-        anomalies.push("CODE_TOO_LONG");
+    if (!/^\d{4}$/.test(last4)) {
+        throw new Error("INVALID_LAST4");
     }
-    if (/\s/.test(input)) {
-        anomalies.push("CONTAINS_SPACES");
-    }
-    if (/[^A-Z0-9\-]/.test(input)) {
-        anomalies.push("INVALID_CHARACTERS");
-    }
-
-    return anomalies;
+    return `${prefix}${last4}`;
 }
 
-/**
- * Protección general del motor
- */
-function validateInput(code) {
-    if (!code || typeof code !== "string") {
-        return { valid: false, type: "EMPTY", anomalies: ["EMPTY_VALUE"] };
-    }
-
-    const normalized = code.trim().toUpperCase();
-    const anomalies = detectAnomalies(normalized);
-
-    if (isSKU(normalized)) {
-        return { valid: true, type: "SKU", anomalies };
-    }
-
-    if (isOEM(normalized)) {
-        return { valid: true, type: "OEM", anomalies };
-    }
-
-    if (isCross(normalized)) {
-        return { valid: true, type: "CROSS", anomalies };
-    }
-
-    return { valid: false, type: "UNKNOWN", anomalies };
-}
-
+// ============================================================================
+// EXPORTS
+// ============================================================================
 module.exports = {
-    validateInput,
-    isSKU,
     isOEM,
     isCross,
-    VALID_PREFIXES,
-    OEM_BRANDS,
-    AFTERMARKET_BRANDS
+    getPrefix,
+    validateNewSKU,
+    OEM_LIST,
+    CROSS_LIST,
+    PREFIX_RULES
 };
