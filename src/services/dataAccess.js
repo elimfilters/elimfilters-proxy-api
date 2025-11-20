@@ -1,82 +1,71 @@
 // ============================================================================
-// ELIMFILTERS — DATA ACCESS v3.0
-// Acceso unificado a datos locales + Master Sheet
+// ELIMFILTERS — DATA ACCESS v4.0
+// Acceso unificado al Sheet Master a través de GoogleSheetsConnector.
+// Provee:
+//   ✔ queryBySKU()
+//   ✔ queryByOEM()
+//   ✔ findRow()
+//   ✔ insertOrReplace()
 // ============================================================================
 
-const GoogleSheetsService = require("./googleSheetsConnector");
-const sheets = new GoogleSheetsService();
+const normalizeQuery = require("../utils/normalizeQuery");
+let sheetsInstance = null;
 
-// Inicializar Google Sheets al cargar módulo
-(async () => {
-  try {
-    await sheets.initialize();
-    console.log("📄 [DATA] Google Sheets conectado");
-  } catch (err) {
-    console.error("❌ [DATA] Error inicializando Sheets:", err.message);
-  }
-})();
-
-// Normalización mínima
-function normalize(code) {
-  return String(code || "").trim().toUpperCase();
+// El motor asigna la instancia desde googleSheetsConnector.js
+function setSheetsInstance(instance) {
+    sheetsInstance = instance;
 }
 
-// ============================================================================
-// BUSCAR POR SKU (columna 'sku')
-// ============================================================================
+/**
+ * Busca un SKU exacto
+ */
 async function queryBySKU(sku) {
-  try {
-    const norm = normalize(sku);
-    const row = await sheets.findRowByQuery(norm);
-    if (!row || !row.found) return null;
-    return row;
-  } catch (err) {
-    console.error("❌ [DATA] Error buscando SKU:", err.message);
-    return null;
-  }
+    if (!sheetsInstance) throw new Error("Sheets instance not initialized");
+
+    const norm = normalizeQuery(sku);
+    const row = await sheetsInstance.findRowBySKU(norm);
+
+    return row || null;
 }
 
-// ============================================================================
-// BUSCAR POR OEM / CROSS (base externa futura)
-// ============================================================================
-async function queryOEM(code) {
-  try {
-    const norm = normalize(code);
-    const row = await sheets.findRowByOEM(norm);
-    return row;
-  } catch (err) {
-    return null;
-  }
+/**
+ * Busca un OEM exacto en la columna oem_number (o equivalentes)
+ */
+async function queryByOEM(oem) {
+    if (!sheetsInstance) throw new Error("Sheets instance not initialized");
+
+    const norm = normalizeQuery(oem);
+    const row = await sheetsInstance.findRowByOEM(norm);
+
+    return row || null;
 }
 
-// ============================================================================
-// GUARDAR / ACTUALIZAR FILA COMPLETA
-// ============================================================================
-async function upsertRow(data) {
-  try {
-    await sheets.replaceOrInsertRow(data);
-    return true;
-  } catch (err) {
-    console.error("❌ [DATA] Error guardando fila Master:", err.message);
-    return false;
-  }
+/**
+ * Busca cualquier código (SKU, OEM, CROSS)
+ */
+async function findRow(query) {
+    if (!sheetsInstance) throw new Error("Sheets instance not initialized");
+
+    const norm = normalizeQuery(query);
+
+    const row = await sheetsInstance.findRowByQuery(norm);
+
+    return row || null;
 }
 
-// ============================================================================
-// OBTENER ENCABEZADOS DEL MASTER
-// ============================================================================
-async function getMasterHeaders() {
-  try {
-    return await sheets.getHeaders();
-  } catch (err) {
-    console.error("❌ [DATA] Error headers:", err.message);
-    return [];
-  }
+/**
+ * Insertar o actualizar fila
+ */
+async function insertOrReplace(data) {
+    if (!sheetsInstance) throw new Error("Sheets instance not initialized");
+
+    return sheetsInstance.replaceOrInsertRow(data);
 }
 
 module.exports = {
-  queryBySKU,
-  queryOEM,
-  upsertRow,
-  getMasterHeaders
+    setSheetsInstance,
+    queryBySKU,
+    queryByOEM,
+    findRow,
+    insertOrReplace
 };
