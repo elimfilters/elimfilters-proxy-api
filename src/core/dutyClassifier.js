@@ -1,33 +1,66 @@
 // ============================================================================
 // ELIMFILTERS — DUTY CLASSIFIER v4.0
-// Clasifica un código OEM/CROSS como HD o LD según reglas oficiales.
+// Clasifica el duty: HD (Heavy Duty) o LD (Light Duty).
 // ============================================================================
 
 const OEM_HD = [
-    "CATERPILLAR", "KOMATSU", "JOHN DEERE", "VOLVO CE", "CASE",
-    "NEW HOLLAND", "CNH", "HITACHI", "KUBOTA", "ISUZU",
-    "HINO", "YANMAR", "MITSUBISHI FUSO", "SCANIA", "DOOSAN",
-    "PERKINS", "MACK", "MAN", "RENAULT", "DEUTZ",
-    "DETROIT DIESEL", "INTERNATIONAL", "NAVISTAR"
+    "CATERPILLAR", "CAT",
+    "KOMATSU",
+    "JOHN DEERE",
+    "VOLVO CE", "VOLVO CONSTRUCTION", "VOLVO",
+    "KUBOTA",
+    "HITACHI",
+    "CASE", "CNH", "NEW HOLLAND",
+    "ISUZU",
+    "HINO",
+    "YANMAR",
+    "MITSUBISHI FUSO",
+    "HYUNDAI CONSTRUCTION",
+    "SCANIA",
+    "MERCEDES-BENZ",
+    "CUMMINS",
+    "PERKINS",
+    "DOOSAN",
+    "MACK",
+    "MAN",
+    "RENAULT TRUCKS",
+    "DEUTZ",
+    "DETROIT DIESEL",
+    "INTERNATIONAL", "NAVISTAR"
 ];
 
 const OEM_LD = [
-    "TOYOTA", "NISSAN", "VOLVO TRUCKS", "FORD", "MERCEDES-BENZ"
+    "TOYOTA",
+    "NISSAN",
+    "HONDA",
+    "MAZDA",
+    "MITSUBISHI",
+    "KIA",
+    "HYUNDAI",
+    "FORD",
+    "CHEVROLET",
+    "SUZUKI",
+    "SUBARU",
+    "VW",
+    "VOLKSWAGEN",
+    "AUDI",
+    "BMW"
 ];
 
-function classifyDuty(brand) {
-    if (!brand) return "HD"; // Default conservador
+function classifyDuty(oemBrand, fallbackManufacturer = null) {
+    if (!oemBrand) return "HD";
 
-    const upper = brand.trim().toUpperCase();
+    const brand = oemBrand.toUpperCase().trim();
 
-    if (OEM_HD.includes(upper)) return "HD";
-    if (OEM_LD.includes(upper)) return "LD";
+    if (OEM_HD.includes(brand)) return "HD";
+    if (OEM_LD.includes(brand)) return "LD";
 
-    // Si no está explícito, evaluar por heurística:
-    if (upper.includes("TRUCK") || upper.includes("ENGINE")) return "HD";
-    if (upper.includes("AUTO") || upper.includes("CAR")) return "LD";
+    if (fallbackManufacturer) {
+        const mf = fallbackManufacturer.toUpperCase();
+        if (mf === "DONALDSON") return "HD";
+        if (mf === "FRAM") return "LD";
+    }
 
-    // Default
     return "HD";
 }
 
