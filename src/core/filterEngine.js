@@ -1,7 +1,7 @@
 // ============================================================================
-// ELIMFILTERS - FILTER ENGINE V4.0.0
-// Motor central: normalización, clasificación, SKU, homologación y respuesta.
-// Autorizado para ambiente de producción.
+// ELIMFILTERS — FILTER ENGINE v4.0 (FINAL)
+// Motor oficial con soporte para multi-equivalencias, prefijos correctos,
+// reglas HD/LD, Donaldson/Fram, OEM prioritario y SKU único por cada referencia.
 // ============================================================================
 
 const detectionService = require("../services/detectionService");
@@ -11,10 +11,12 @@ const dataAccess = require("../services/dataAccess");
 const jsonBuilder = require("../utils/jsonBuilder");
 
 // ============================================================================
-// NORMALIZACIÓN UNIVERSAL
+// NORMALIZACIÓN
 // ============================================================================
 function normalizeInput(code) {
-    if (!code || typeof code !== "string") return "";
+    if (!code || typeof code !== "string") {
+        return "";
+    }
     return code.trim().toUpperCase().replace(/\s+/g, "");
 }
 
@@ -23,7 +25,6 @@ function normalizeInput(code) {
 // ============================================================================
 async function processCode(inputCode) {
     const normalized = normalizeInput(inputCode);
-
     if (!normalized) {
         return jsonBuilder.buildErrorResponse({
             error: "EMPTY_CODE",
@@ -34,27 +35,14 @@ async function processCode(inputCode) {
 
     console.log(`[ENGINE] Código recibido → ${normalized}`);
 
-    // 1. Determinar tipo de código
     const detection = detectionService.detectCodeType(normalized);
     console.log(`[ENGINE] Tipo detectado → ${detection.type}`);
 
     switch (detection.type) {
-
-        // --------------------------------------------------------------------
-        // SKU DIRECTO (EL8xxxx, EA1xxxx, EF9xxxx, etc.)
-        // --------------------------------------------------------------------
         case "SKU":
-            return handleSKU(normalized);
-
-        // --------------------------------------------------------------------
-        // OEM / CROSS REFERENCE
-        // --------------------------------------------------------------------
+            return processSKU(normalized);
         case "OEM":
-            return handleOEM(normalized);
-
-        // --------------------------------------------------------------------
-        // DESCONOCIDO
-        // --------------------------------------------------------------------
+            return processOEM(normalized);
         default:
             return jsonBuilder.buildErrorResponse({
                 query_norm: normalized,
@@ -68,11 +56,10 @@ async function processCode(inputCode) {
 // ============================================================================
 // MANEJO SKU DIRECTO
 // ============================================================================
-async function handleSKU(sku) {
-    console.log(`[ENGINE] Buscando por SKU → ${sku}`);
+async function processSKU(sku) {
+    console.log(`[ENGINE] Buscando por SKU directo → ${sku}`);
 
     const record = await dataAccess.queryBySKU(sku);
-
     if (!record) {
         return jsonBuilder.buildErrorResponse({
             query_norm: sku,
@@ -81,46 +68,39 @@ async function handleSKU(sku) {
             ok: false
         });
     }
-
-    return jsonBuilder.buildStandardResponse({
-        queryNorm: sku,
-        sku: record.sku,
-        duty: record.duty,
-        family: record.family,
-        filterType: record.filter_type,
-        subtype: record.subtype,
-        specs: record.specs || {},
-        oemCodes: record.oem_codes || [],
-        crossReference: record.cross_reference || [],
-        baseCode: record.base_code || "",
-        prefix: record.prefix,
-        source: "MASTER",
-        confidence: "HIGH"
-    });
+    return jsonBuilder.buildStandardResponse(record);
 }
 
 // ============================================================================
-// MANEJO OEM / CROSS
+// MANEJO OEM / CROSS (MULTI-SKU INCLUIDO)
 // ============================================================================
-async function handleOEM(code) {
+async function processOEM(code) {
     console.log(`[ENGINE] Procesando OEM/CROSS → ${code}`);
 
     try {
-        // 1. Procesar el código con el motor interno
         const result = await filterProcessor.processFilterCode(code);
 
-        console.log(`[ENGINE] Procesamiento interno completado → SKU ${result.results[0].sku}`);
+        // Si es single-equivalencia → retornar normal
+        if (result.results.length === 1) {
+            console.log(`[ENGINE] Resultado simple → SKU ${result.results[0].sku}`);
+            return result;
+        }
+
+        // Si hay múltiple equivalencias
+        console.log(`[ENGINE] MULTI-EQUIVALENCIA DETECTADA → ${result.results.length} SKUs generados`);
+
+        // Registrar en base de datos de auditoría de multi-equivalencias
+        homologationDB.saveMultiEquivalence(
+            code,
+            result.results.map(e => e.sku)
+        );
+
         return result;
 
     } catch (err) {
-
-        // - - - - - - - - - - - - - - - - - - - - -
-        // Código no está en BD → enviar a homologación
-        // - - - - - - - - - - - - - - - - - - - - -
         if (err.status === 404) {
-            console.log(`[ENGINE] Código no existe en BD → enviado a homologación`);
-
-            await homologationDB.saveUnknownCode(code);
+            console.log(`[ENGINE] Código desconocido → se envía a homologación`);
+            homologationDB.saveUnknownCode(code);
 
             return jsonBuilder.buildErrorResponse({
                 query_norm: code,
@@ -130,7 +110,6 @@ async function handleOEM(code) {
             });
         }
 
-        // Error interno inesperado
         console.error(`[ENGINE] ERROR INTERNO`, err);
 
         return jsonBuilder.buildErrorResponse({
