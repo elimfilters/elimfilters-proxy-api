@@ -1,49 +1,34 @@
 // ============================================================================
-// ELIMFILTERS — HOMOLOGATION DB v3.0
-// Registro de códigos desconocidos para análisis posterior
+// ELIMFILTERS - HOMOLOGATION DATABASE v3.0
+// Guarda códigos desconocidos para revisión humana.
 // ============================================================================
 
 const fs = require("fs");
 const path = require("path");
 
-const FILE_PATH = path.join(__dirname, "../../data/homologation_unknown.json");
+const DB_PATH = path.join(__dirname, "..", "..", "data", "homologation_pending.json");
 
-// Asegurar archivo inicial
-function ensureFile() {
-    if (!fs.existsSync(FILE_PATH)) {
-        fs.writeFileSync(FILE_PATH, JSON.stringify({ unknown: [] }, null, 2));
+// Crear archivo si no existe
+function ensureDB() {
+    if (!fs.existsSync(DB_PATH)) {
+        fs.writeFileSync(DB_PATH, JSON.stringify([], null, 2));
     }
 }
 
-// Registrar código desconocido sin duplicarlo
-function saveUnknownCode(code) {
-    ensureFile();
+// Guardar código desconocido
+async function saveUnknownCode(code) {
+    ensureDB();
+    const list = JSON.parse(fs.readFileSync(DB_PATH, "utf8"));
 
-    const raw = fs.readFileSync(FILE_PATH, "utf8");
-    const json = JSON.parse(raw);
-
-    const normalized = String(code).toUpperCase().trim();
-
-    if (!json.unknown.includes(normalized)) {
-        json.unknown.push(normalized);
-        fs.writeFileSync(FILE_PATH, JSON.stringify(json, null, 2));
-        console.log("📩 Registrado en homologación:", normalized);
+    if (!list.includes(code)) {
+        list.push(code);
+        fs.writeFileSync(DB_PATH, JSON.stringify(list, null, 2));
+        console.log(`[HOMOLOGATION] Código almacenado → ${code}`);
     } else {
-        console.log("⚠️ Ya estaba registrado:", normalized);
+        console.log(`[HOMOLOGATION] Código ya estaba registrado → ${code}`);
     }
-
-    return true;
-}
-
-// Listar desconocidos
-function listUnknownCodes() {
-    ensureFile();
-    const raw = fs.readFileSync(FILE_PATH, "utf8");
-    const json = JSON.parse(raw);
-    return json.unknown || [];
 }
 
 module.exports = {
-    saveUnknownCode,
-    listUnknownCodes
+    saveUnknownCode
 };
