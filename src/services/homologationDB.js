@@ -1,31 +1,40 @@
 // ============================================================================
-// ELIMFILTERS - HOMOLOGATION DATABASE v3.0
-// Guarda códigos desconocidos para revisión humana.
+// ELIMFILTERS — HOMOLOGATION DB v3.0
+// Registra códigos desconocidos para validación posterior
 // ============================================================================
 
 const fs = require("fs");
 const path = require("path");
 
-const DB_PATH = path.join(__dirname, "..", "..", "data", "homologation_pending.json");
+const HOMOLOGATION_FILE = path.join(__dirname, "..", "..", "data", "unknown_codes.json");
 
-// Crear archivo si no existe
-function ensureDB() {
-    if (!fs.existsSync(DB_PATH)) {
-        fs.writeFileSync(DB_PATH, JSON.stringify([], null, 2));
+// Asegurar que el archivo exista
+function ensureFile() {
+    if (!fs.existsSync(path.dirname(HOMOLOGATION_FILE))) {
+        fs.mkdirSync(path.dirname(HOMOLOGATION_FILE), { recursive: true });
+    }
+    if (!fs.existsSync(HOMOLOGATION_FILE)) {
+        fs.writeFileSync(HOMOLOGATION_FILE, JSON.stringify({ entries: [] }, null, 2));
     }
 }
 
-// Guardar código desconocido
+// Registrar código OEM desconocido
 async function saveUnknownCode(code) {
-    ensureDB();
-    const list = JSON.parse(fs.readFileSync(DB_PATH, "utf8"));
+    try {
+        ensureFile();
+        const raw = fs.readFileSync(HOMOLOGATION_FILE, "utf8");
+        const json = JSON.parse(raw);
 
-    if (!list.includes(code)) {
-        list.push(code);
-        fs.writeFileSync(DB_PATH, JSON.stringify(list, null, 2));
-        console.log(`[HOMOLOGATION] Código almacenado → ${code}`);
-    } else {
-        console.log(`[HOMOLOGATION] Código ya estaba registrado → ${code}`);
+        // Evitar duplicados
+        if (!json.entries.includes(code)) {
+            json.entries.push(code);
+        }
+
+        fs.writeFileSync(HOMOLOGATION_FILE, JSON.stringify(json, null, 2));
+        return true;
+    } catch (e) {
+        console.error("❌ Error guardando unknown code:", e.message);
+        return false;
     }
 }
 
