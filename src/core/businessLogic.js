@@ -1,174 +1,226 @@
 // ============================================================================
-// ELIMFILTERS — BUSINESS LOGIC ENGINE v3.0
-// Lógica comercial oficial de generación de SKU y metadatos
+// ELIMFILTERS – BUSINESS LOGIC ENGINE (FINAL VERSION)
+// Generación de SKUs, multi-códigos, familia, duty, media y campos Master Sheet
 // ============================================================================
 
-const rulesProtection = require("./rulesProtection");
-const dataAccess = require("../services/dataAccess");
+const detectionService = require("../services/detectionService");
+const jsonBuilder = require("../utils/jsonBuilder");
 
-// Marcas OEM oficiales
-const OEM_BRANDS = [
-  "CATERPILLAR","CAT","KOMATSU","TOYOTA","NISSAN","JOHN DEERE","DEERE",
-  "FORD","VOLVO","KUBOTA","HITACHI","CNH","CASE","NEW HOLLAND",
-  "ISUZU","HINO","YANMAR","FUSO","HYUNDAI","SCANIA","MERCEDES",
-  "CUMMINS","PERKINS","DOOSAN","MACK","MAN","RENAULT","DEUTZ",
-  "DETROIT","INTERNATIONAL"
-];
+// Prefijos oficiales
+const PREFIX = {
+  AIR: "EA1",            // HD y LD
+  OIL: "EL8",            // HD y LD
+  FUEL: "EF9",           // HD y LD
+  HYDRAULIC: "EH6",      // HD
+  CABIN: "EC1",          // HD y LD
+  CARCAZAS: "EA2",       // HD
+  AIRDRYER: "ED4",       // HD
+  COOLANT: "EW7",        // HD
+  SEPARATOR: "ES9",      // HD
+  KIT_HD: "EK5",         // HD
+  KIT_LD: "EK6"          // LD
+};
 
-// Aftermarket premium
-const AFTERMARKET = [
-  "DONALDSON","FLEETGUARD","PARKER","RACOR","MANN","BALDWIN",
-  "WIX","FRAM","HENGST","MAHLE","BOSCH","SAKURA","LUBER-FINER"
-];
-
-// Media oficial
+// Media oficial por familia
 const MEDIA = {
   OIL: "ELIMTEK™",
   FUEL: "ELIMTEK™",
   HYDRAULIC: "ELIMTEK™",
   AIR: "MACROCORE™",
-  CABIN: "MICROKAPPA™",
-  AIR_DRYER: "ELIMTEK™",
-  COOLANT: "ELIMTEK™"
+  CABIN: "MICROKAPPA™"
 };
 
-// Subtipos
-const SUBTYPE = {
-  OIL: "SPIN-ON",
-  FUEL: "SPIN-ON",
-  HYDRAULIC: "SPIN-ON",
-  AIR: "PRIMARY ELEMENT",
-  CABIN: "PANEL",
-  AIR_DRYER: "SPIN-ON",
-  COOLANT: "SPIN-ON"
-};
+// ============================================================================
+// Determinar familia por marca o patrón
+// ============================================================================
+function resolveFamily(code) {
+  const fam = detectionService.detectFamily(code); // heurística base
 
-// =====================================================================================
-// NORMALIZAR CONSULTA
-// =====================================================================================
-function normalize(code) {
-  return String(code || "")
-    .toUpperCase()
-    .trim()
-    .replace(/[^A-Z0-9\-\/]/g, "");
+  if (fam === "AIR") return "AIR";
+  if (fam === "FUEL") return "FUEL";
+  if (fam === "HYDRAULIC") return "HYDRAULIC";
+
+  return "OIL"; // fallback
 }
 
-// =====================================================================================
-// DETERMINAR SI ES OEM
-// =====================================================================================
-function isOEM(brand) {
-  if (!brand) return false;
-  const b = brand.toUpperCase();
-  return OEM_BRANDS.includes(b);
+// ============================================================================
+// Determinar DUTY final según fabricante
+// ============================================================================
+function resolveDuty(brand) {
+  brand = (brand || "").toUpperCase();
+
+  // OEM → si es maquinaria, automáticamente HD
+  const HD_BRANDS = [
+    "CATERPILLAR", "CAT", "KOMATSU", "JOHNDEERE", "DEERE",
+    "VOLVO", "VOLVOCE", "HITACHI", "CASE", "NEWHOLLAND",
+    "MACK", "MAN", "SCANIA", "RENAULTTRUCKS", "INTERNATIONAL",
+    "NAVISTAR", "DOOSAN"
+  ];
+
+  const LD_BRANDS = [
+    "TOYOTA", "NISSAN", "HYUNDAI",
+    "HINO", "ISUZU", "YANMAR", "MITSUBISHIFUSO"
+  ];
+
+  if (HD_BRANDS.includes(brand)) return "HD";
+  if (LD_BRANDS.includes(brand)) return "LD";
+
+  // Si el brand es desconocido → Default HD
+  return "HD";
 }
 
-// =====================================================================================
-// ASIGNAR FAMILIA A PARTIR DE EQUIVALENTE (Donaldson/Fram) O OEM
-// =====================================================================================
-function detectFamily(description = "", brand = "") {
-  const text = `${description} ${brand}`.toUpperCase();
+// ============================================================================
+// Construye un SKU a partir de prefijo + last4
+// ============================================================================
 
-  if (text.includes("AIR") || text.includes("FILTER AIR")) return "AIR";
-  if (text.includes("OIL")) return "OIL";
-  if (text.includes("FUEL")) return "FUEL";
-  if (text.includes("HYD")) return "HYDRAULIC";
-  if (text.includes("CAB")) return "CABIN";
-  if (text.includes("COOL")) return "COOLANT";
-  if (text.includes("DRYER")) return "AIR_DRYER";
-
-  return "OIL"; // fallback seguro
-}
-
-// =====================================================================================
-// REGLA FINAL PARA DUTY
-// =====================================================================================
-function detectDuty(brand) {
-  if (!brand) return "HD";
-
-  const b = brand.toUpperCase();
-
-  // Toyota, Nissan, Honda, Hyundai → LD
-  if (["TOYOTA","NISSAN","HONDA","HYUNDAI","KIA","MAZDA"].includes(b)) {
-    return "LD";
-  }
-
-  return "HD"; // default
-}
-
-// =====================================================================================
-// GENERAR ÚLTIMOS 4 DIGITOS
-// =====================================================================================
-async function generateLast4(oemCode, duty, donEquivalent, framEquivalent) {
-  // 1. Prioridad Donaldson para HD
-  if (duty === "HD" && donEquivalent) {
-    const match = donEquivalent.match(/\d{4}$/);
-    if (match) return match[0];
-  }
-
-  // 2. Prioridad FRAM para LD
-  if (duty === "LD" && framEquivalent) {
-    const match = framEquivalent.match(/\d{4}$/);
-    if (match) return match[0];
-  }
-
-  // 3. Si ninguno fabrica → usar los últimos 4 del OEM
-  const oemMatch = oemCode.match(/\d{4}$/);
-  if (oemMatch) return oemMatch[0];
-
-  return "0000";
-}
-
-// =====================================================================================
-// CONSTRUIR SKU FINAL
-// =====================================================================================
 function buildSKU(family, duty, last4) {
-  const prefix = rulesProtection.getPrefix(family, duty);
-  return `${prefix}${last4}`;
+  family = family.toUpperCase();
+  duty = duty.toUpperCase();
+
+  if (!/^[0-9]{4}$/.test(last4)) last4 = "0000";
+
+  let prefix = PREFIX[family];
+
+  // FAMILY + duty combos especiales
+  if (family === "HYDRAULIC") prefix = PREFIX.HYDRAULIC;
+  if (family === "CABIN") prefix = PREFIX.CABIN;
+
+  return prefix + last4;
 }
 
-// =====================================================================================
-// EXPORT: FUNCIÓN PRINCIPAL
-// =====================================================================================
-async function buildFinalRecord({ query, brand, description, don, fram, oemCodes = [], crossRefs = [] }) {
-  const norm = normalize(query);
+// ============================================================================
+// Procesamiento MULTI-CÓDIGOS
+// ============================================================================
 
-  // Familia
-  const family = detectFamily(description, brand);
+function generateMultiSKU({ originalOEM, brand, equivalents, family }) {
+  const duty = resolveDuty(brand);
 
-  // Duty
-  const duty = detectDuty(brand);
+  const donaldsonList = equivalents.filter(e => e.brand === "DONALDSON");
+  const framList = equivalents.filter(e => e.brand === "FRAM");
+  const oemList = equivalents.filter(e => e.brand === "OEM");
 
-  // Últimos 4
-  const last4 = await generateLast4(norm, duty, don, fram);
+  const results = [];
 
-  // SKU final
-  const sku = buildSKU(family, duty, last4);
+  equivalents.slice(0, 10).forEach((item, index) => {
+    const baseLast4 = item.code.slice(-4);
+    const sku = buildSKU(family, duty, baseLast4);
 
-  // Media
-  const media_type = MEDIA[family] || "ELIMTEK™";
+    const entry = {
+      sku,
+      homologated_sku: sku,
+      priority_reference: index === 0 ? "PRIMARY" : "SECONDARY",
+      priority_brand_reference: item.brand,
+      source: "ENGINE_MULTI",
+      last4_source: item.code,
+      last4_digits: baseLast4,
+      manufactured_by: item.brand,
+      duty,
+      family,
+    };
 
-  // Subtipo
-  const subtype = SUBTYPE[family] || "SPIN-ON";
+    results.push(entry);
+  });
+
+  return results;
+}
+
+// ============================================================================
+// Armar fila MASTER SHEET
+// ============================================================================
+function buildMasterRow({ query_norm, result, oem_codes, cross_codes, family, duty }) {
+  const media = MEDIA[family] || "ELIMTEK™";
+
+  const primary = result[0]; // PRIMARIO
 
   return {
-    query_norm: norm,
-    sku,
+    query_norm,
+    sku: primary.sku,
+    homologated_sku: primary.homologated_sku,
     family,
     duty,
-    media_type,
-    filter_type: `${family} FILTER`,
-    subtype,
-    oem_codes: oemCodes.slice(0, 10).join(","),
-    cross_reference: crossRefs.slice(0, 10).join(","),
-    manufactured_by: brand || "",
-    last4_source: duty === "HD" ? "DONALDSON" : "FRAM",
-    last4_digits: last4,
-    source: "ENGINE",
-    homologated_sku: sku
+    media_type: media,
+    filter_type: family === "AIR" ? "Air Filter" :
+                family === "CABIN" ? "Cabin Filter" :
+                family === "FUEL" ? "Fuel Filter" :
+                family === "HYDRAULIC" ? "Hydraulic Filter" :
+                "Oil Filter",
+
+    subtype: "SPIN-ON",
+
+    oem_codes: oem_codes.slice(0, 10).join(","),
+    cross_reference: cross_codes.slice(0, 10).join(","),
+
+    // Campos técnicos (vacíos)
+    height_mm: "",
+    outer_diameter_mm: "",
+    thread_size: "",
+    gasket_od_mm: "",
+    gasket_id_mm: "",
+    bypass_valve_psi: "",
+    micron_rating: "",
+    iso_main_efficiency_percent: "",
+    iso_test_method: "",
+    beta_200: "",
+    hydrostatic_burst_psi: "",
+    dirt_capacity_grams: "",
+    rated_flow_cfm: "",
+    rated_flow_gpm: "",
+    panel_width_mm: "",
+    panel_depth_mm: "",
+    manufacturing_standards: "",
+    certification_standards: "",
+    operating_pressure_min_psi: "",
+    operating_pressure_max_psi: "",
+    operating_temperature_min_c: "",
+    operating_temperature_max_c: "",
+    fluid_compatibility: "",
+    disposal_method: "",
+    weight_grams: "",
+    service_life_hours: "",
+    change_interval_km: "",
+    water_separation_efficiency_percent: "",
+    drain_type: "",
+
+    all_cross_references: cross_codes.slice(0, 10).join(","),
+    review: "AUTO",
+    ok: true
+  };
+}
+
+// ============================================================================
+// FINAL: FUNCIÓN PRINCIPAL
+// ============================================================================
+async function processBusiness(code, equivalents) {
+  const query_norm = detectionService.normalize(code);
+  const brand = detectionService.detectBrand(code);
+  const family = resolveFamily(code);
+  const duty = resolveDuty(brand);
+
+  const resultRows = generateMultiSKU({
+    originalOEM: code,
+    brand,
+    equivalents,
+    family
+  });
+
+  const oemList = equivalents.filter(e => e.brand === "OEM").map(e => e.code);
+  const crossList = equivalents.filter(e => e.brand !== "OEM").map(e => e.code);
+
+  const masterRow = buildMasterRow({
+    query_norm,
+    result: resultRows,
+    oem_codes: oemList,
+    cross_codes: crossList,
+    family,
+    duty
+  });
+
+  return {
+    multi_results: resultRows,
+    master_row: masterRow
   };
 }
 
 module.exports = {
-  buildFinalRecord,
-  normalize
+  processBusiness
 };
