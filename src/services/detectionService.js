@@ -1,163 +1,164 @@
 // ============================================================================
-// ELIMFILTERS — detectionService.js
-// Detecta tipo de código, familia, duty y fuente (OEM / Aftermarket / SKU).
+// ELIMFILTERS - DETECTION SERVICE (FINAL VERSION)
+// Clasificación del código, detección OEM/Aftermarket, familia y fabricante
 // ============================================================================
 
-// LISTA OFICIAL OEM (HD + LD)
-const OEM_MANUFACTURERS = [
-    "CATERPILLAR", "CAT",
-    "KOMATSU",
-    "TOYOTA", "NISSAN",
-    "JOHN DEERE",
-    "FORD",
-    "VOLVO", "VOLVO CE", "VOLVO TRUCKS",
-    "KUBOTA",
-    "HITACHI",
-    "CASE", "NEW HOLLAND", "CNH",
-    "ISUZU",
-    "HINO",
-    "YANMAR",
-    "MITSUBISHI FUSO",
-    "HYUNDAI CONSTRUCTION",
-    "SCANIA",
-    "MERCEDES-BENZ", "MERCEDES",
-    "CUMMINS",
-    "PERKINS",
-    "DOOSAN",
-    "MACK",
-    "MAN",
-    "RENAULT TRUCKS",
-    "DEUTZ",
-    "DETROIT DIESEL",
-    "INTERNATIONAL", "NAVISTAR"
+const normalize = (code) =>
+  String(code || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "")
+    .replace(/[^A-Z0-9\-]/g, "");
+
+// ============================================================================
+// LISTAS OFICIALES
+// ============================================================================
+
+// OEM reales (fabricantes)
+const OEM_BRANDS = [
+  "CATERPILLAR", "CAT",
+  "KOMATSU",
+  "TOYOTA", "NISSAN",
+  "JOHNDEERE", "DEERE",
+  "VOLVO", "VOLVOCE", "VOLVOTRUCKS",
+  "KUBOTA",
+  "HITACHI",
+  "CNH", "CASE", "NEWHOLLAND",
+  "ISUZU", "HINO", "YANMAR",
+  "MITSUBISHIFUSO",
+  "HYUNDAI",
+  "SCANIA",
+  "MERCEDES", "MERCEDESBENZ",
+  "CUMMINS",     // OEM engine parts ONLY (no Fleetguard)
+  "PERKINS",
+  "DOOSAN",
+  "MACK", "MAN", "RENAULTTRUCKS",
+  "DEUTZ",
+  "DETROITDIESEL",
+  "INTERNATIONAL", "NAVISTAR",
 ];
 
-// LISTA OFICIAL DE AFTERMARKET / CROSS REFERENCE
+// Aftermarket / cross references
 const AFTERMARKET_BRANDS = [
-    "DONALDSON",
-    "FLEETGUARD",
-    "PARKER", "RACCOR",
-    "MANN", "MANN+HUMMEL",
-    "BALDWIN",
-    "WIX",
-    "FRAM",
-    "HENGST",
-    "MAHLE", "KNECHT",
-    "BOSCH",
-    "SAKURA",
-    "LUBER-FINER", "SURE FILTERS",
-    "TECfil", "PREMIUM FILTERS", "MILLAR", "HENGS"
+  "DONALDSON",
+  "FLEETGUARD",
+  "PARKER", "RACOR",
+  "MANN", "MANNHUMMEL",
+  "BALDWIN",
+  "WIX",
+  "FRAM",
+  "HENGST",
+  "MAHLE", "KNECHT",
+  "BOSCH",
+  "SAKURA",
+  "LUBERFINER", "SUREFILTERS",
+  "TECFIL",
+  "PREMIUMFILTERS",
+  "MILLAR"
 ];
 
-// TABLA DE FAMILIAS (TU TABLA FINAL)
-const FAMILY_TABLE = {
-    AIR:       { HD: "EA1", LD: "EA1" },
-    OIL:       { HD: "EL8", LD: "EL8" },
-    FUEL:      { HD: "EF9", LD: "EF9" },
-    HYDRAULIC: { HD: "EH6" },
-    CABIN:     { HD: "EC1", LD: "EC1" },
-    CARCAZAS:  { HD: "EA2" },
-    "AIR DRYER": { HD: "ED4" },
-    COOLANT:   { HD: "EW7" },
-    "FUEL SEPARATOR": { HD: "ES9" },
-    "KITS HD": { HD: "EK5" },
-    "KITS LD": { LD: "EK6" }
-};
+// ============================================================================
+// DETECCIÓN DE MARCA
+// ============================================================================
 
-// DETECTA SI ES SKU DIRECTO (EL8xxxx, EF9xxxx, etc.)
-function isSKU(code) {
-    return /^[A-Z]{2,3}\d{4}$/.test(code);
+function detectBrand(code) {
+  const c = normalize(code);
+
+  // Detectar si empieza con típicos OEM
+  if (/^(1R|6I|7C|9X|326|471|3E|4N|5P|6Y|7W|8C|9M)/.test(c)) return "CATERPILLAR";
+  if (/^(600|613|674|786)/.test(c)) return "KOMATSU";
+  if (/^(23390|17801|04152|15601)/.test(c)) return "TOYOTA";
+  if (/^(15208|16546|22690)/.test(c)) return "NISSAN";
+  if (/^(RE|AR|AT|DZ|TY)/.test(c)) return "JOHNDEERE";
+
+  // Donaldson codes
+  if (/^P\d{5,6}$/.test(c)) return "DONALDSON";
+
+  // Fleetguard
+  if (/^[A-Z]{1,3}\d{3,6}$/.test(c) && /^(LF|HF|FF|AF)/.test(c)) return "FLEETGUARD";
+
+  return "UNKNOWN";
 }
 
-// NORMALIZA CÓDIGO
-function normalize(code) {
-    return code.trim().toUpperCase().replace(/\s+/g, "");
+// ============================================================================
+// CLASIFICACIÓN DEL CÓDIGO
+// ============================================================================
+
+function detectCodeType(code) {
+  const c = normalize(code);
+
+  // SKU interno de ELIMFILTERS
+  if (/^(EA1|EA2|EL8|EF9|EH6|EC1|ED4|EW7|ES9|EK5|EK6)\d{4}$/.test(c)) {
+    return { type: "SKU" };
+  }
+
+  // OEM: deben ser códigos de fabricantes reales
+  const brand = detectBrand(c);
+  if (OEM_BRANDS.includes(brand)) return { type: "OEM", brand };
+
+  // Aftermarket
+  if (AFTERMARKET_BRANDS.includes(brand)) {
+    return { type: "AFTERMARKET", brand };
+  }
+
+  // Si el código es puro número o guiones, lo consideramos OEM
+  if (/^[0-9\-]{4,}$/.test(c)) return { type: "OEM", brand: "UNKNOWN" };
+
+  return { type: "UNKNOWN" };
 }
 
-// DETERMINAR DUTY SEGÚN FABRICANTE OEM
-function detectDutyFromManufacturer(brand) {
-    const HD_BRANDS = [
-        "CATERPILLAR","CAT","KOMATSU","JOHN DEERE","VOLVO","VOLVO CE","VOLVO TRUCKS",
-        "HITACHI","CASE","NEW HOLLAND","CNH","ISUZU","HINO","YANMAR","MITSUBISHI FUSO",
-        "HYUNDAI CONSTRUCTION","SCANIA","MACK","MAN","RENAULT TRUCKS","DETROIT DIESEL",
-        "DOOSAN","DEUTZ","INTERNATIONAL","NAVISTAR"
-    ];
+// ============================================================================
+// DETECCIÓN DE FAMILIA POR HEURÍSTICA
+// ============================================================================
 
-    const LD_BRANDS = [
-        "TOYOTA","NISSAN","FORD","KUBOTA","MERCEDES","MERCEDES-BENZ","CUMMINS","PERKINS"
-    ];
+function detectFamily(code) {
+  const c = normalize(code);
 
-    if (HD_BRANDS.includes(brand)) return "HD";
-    if (LD_BRANDS.includes(brand)) return "LD";
+  if (/^P5/.test(c) || /^LF/.test(c)) return "OIL";
+  if (/^FF|FS/.test(c)) return "FUEL";
+  if (/^AF/.test(c)) return "AIR";
+  if (/^HF/.test(c)) return "HYDRAULIC";
 
-    return "HD"; // DEFAULT
+  return "OIL"; // fallback seguro
 }
 
-// DETERMINA FAMILIA POR PATRONES DE CÓDIGO OEM
-function detectFamilyByCode(code) {
-    if (code.includes("AIR") || code.includes("A/")) return "AIR";
-    if (code.includes("OIL") || code.includes("LUB")) return "OIL";
-    if (code.includes("FUEL") || code.includes("FS") || code.includes("RACOR")) return "FUEL";
-    if (code.includes("HYD")) return "HYDRAULIC";
-    if (code.includes("CAB")) return "CABIN";
-    return "OIL"; // fallback más común
-}
+// ============================================================================
+// PRIORIDAD DE NÚMEROS PARA GENERAR LOS 4 DÍGITOS BASE
+// ============================================================================
+// HD = Donaldson
+// LD = FRAM
+// OEM si no existe Donaldson/Fram
+// OEM más comercial si existen múltiples
 
-// EXPORTADO: FUNCIÓN PRINCIPAL
-function detectCodeType(input) {
-    const code = normalize(input);
+function pickLast4Digits({ duty, donaldsonList, framList, oemList }) {
 
-    // 1. SKU DIRECTO
-    if (isSKU(code)) {
-        return {
-            type: "SKU",
-            source_type: "SKU",
-            code,
-            family: null,
-            duty: null
-        };
+  // HD → Donaldson primero
+  if (duty === "HD") {
+    if (donaldsonList.length > 0) {
+      return donaldsonList[0].slice(-4);
     }
+    return oemList[0].slice(-4);
+  }
 
-    // 2. OEM
-    const brandFragment = code.split(/[- ]/)[0];
-
-    if (OEM_MANUFACTURERS.includes(brandFragment)) {
-        const duty = detectDutyFromManufacturer(brandFragment);
-        const family = detectFamilyByCode(code);
-
-        return {
-            type: "OEM",
-            source_type: "OEM",
-            code,
-            family,
-            duty
-        };
+  // LD → FRAM primero
+  if (duty === "LD") {
+    if (framList.length > 0) {
+      return framList[0].slice(-4);
     }
+    return oemList[0].slice(-4);
+  }
 
-    // 3. AFTERMARKET / CROSS
-    if (AFTERMARKET_BRANDS.includes(brandFragment)) {
-        return {
-            type: "OEM", // se procesa igual en filterProcessor
-            source_type: "AFTERMARKET",
-            code,
-            family: detectFamilyByCode(code),
-            duty: "HD"
-        };
-    }
-
-    // 4. SI NO COINCIDE → OEM genérico
-    return {
-        type: "OEM",
-        source_type: "OEM",
-        code,
-        family: detectFamilyByCode(code),
-        duty: "HD"
-    };
+  return oemList[0].slice(-4);
 }
+
+// ============================================================================
+// EXPORTS
+// ============================================================================
 
 module.exports = {
-    detectCodeType,
-    FAMILY_TABLE,
-    OEM_MANUFACTURERS,
-    AFTERMARKET_BRANDS
+  normalize,
+  detectBrand,
+  detectCodeType,
+  detectFamily,
+  pickLast4Digits
 };
