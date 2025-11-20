@@ -1,71 +1,162 @@
 // ============================================================================
 // ELIMFILTERS — RULES PROTECTION ENGINE v3.0
-// Maneja prefijos, familias, duty y reglas de decisión protegidas.
+// Valida formatos de códigos, protege integridad del motor y evita SKUs corruptos.
 // ============================================================================
 
-// Tabla oficial unificada
-const PREFIX_TABLE = {
-    AIR:        { HD: "EA1", LD: "EA1" },
-    OIL:        { HD: "EL8", LD: "EL8" },
-    FUEL:       { HD: "EF9", LD: "EF9" },
-    HYDRAULIC:  { HD: "EH6", LD: null },
-    CABIN:      { HD: "EC1", LD: "EC1" },
-    CARCAZAS:   { HD: "EA2", LD: null },
-    AIR_DRYER:  { HD: "ED4", LD: null },
-    COOLANT:    { HD: "EW7", LD: null },
-    SEPARATOR:  { HD: "ES9", LD: null },
-    KITS_HD:    { HD: "EK5", LD: null },
-    KITS_LD:    { HD: null, LD: "EK6" },
-};
+/**
+ * Reglas de prefijos válidos según familia/duty.
+ */
+const VALID_PREFIXES = [
+    "EL8", // OIL HD/LD
+    "EA1", // AIR HD/LD
+    "EF9", // FUEL HD/LD
+    "EC1", // CABIN HD/LD
+    "EH6", // HYDRAULIC HD
+    "EA2", // AIR HOUSINGS (Carcazas)
+    "ED4", // AIR DRYER
+    "EW7", // COOLANT
+    "ES9", // FUEL SEPARATOR
+    "EK5", // KITS HD
+    "EK6"  // KITS LD
+];
 
-// Familias válidas del motor (normalizadas)
-const FAMILY_CANONICAL = {
-    AIR: "AIR",
-    OIL: "OIL",
-    FUEL: "FUEL",
-    HYDRAULIC: "HYDRAULIC",
-    CABIN: "CABIN",
-    CARCAZAS: "CARCAZAS",
-    AIR_DRYER: "AIR_DRYER",
-    COOLANT: "COOLANT",
-    SEPARATOR: "SEPARATOR",
-    KITS_HD: "KITS_HD",
-    KITS_LD: "KITS_LD"
-};
+/**
+ * Formatos OEM reconocidos
+ */
+const OEM_BRANDS = [
+    "CAT", "CATERPILLAR",
+    "KOMATSU",
+    "TOYOTA", "NISSAN",
+    "JOHN DEERE",
+    "FORD",
+    "VOLVO", "VOLVO CE", "VOLVO TRUCKS",
+    "KUBOTA",
+    "HITACHI",
+    "CASE", "CNH", "NEW HOLLAND",
+    "ISUZU",
+    "HINO",
+    "YANMAR",
+    "MITSUBISHI", "FUSO",
+    "HYUNDAI",
+    "SCANIA",
+    "MERCEDES",
+    "CUMMINS",
+    "PERKINS",
+    "DOOSAN",
+    "MACK",
+    "MAN",
+    "RENAULT",
+    "DEUTZ",
+    "DETROIT",
+    "INTERNATIONAL"
+];
 
-// Normaliza entrada de familia
-function normalizeFamily(name) {
-    if (!name) return null;
-    const n = name.trim().toUpperCase();
+/**
+ * Patrones típicos de OEM (numeración extensa)
+ */
+const OEM_REGEX = /^[A-Z0-9\-]{5,20}$/;
 
-    return FAMILY_CANONICAL[n] || null;
+/**
+ * CROSS / AFTERMARKET brands
+ */
+const AFTERMARKET_BRANDS = [
+    "DONALDSON",
+    "FLEETGUARD",
+    "PARKER",
+    "RACOR",
+    "MANN",
+    "BALDWIN",
+    "WIX",
+    "FRAM",
+    "HENGST",
+    "MAHLE",
+    "KNECHT",
+    "BOSCH",
+    "SAKURA",
+    "LUBER-FINER",
+    "TECFIL",
+    "HENGS",
+    "PREMIUM FILTERS",
+    "MILLAR"
+];
+
+/**
+ * Detecta si un código tiene formato de SKU ELIMFILTERS
+ */
+function isSKU(code) {
+    return VALID_PREFIXES.some(pref => code.startsWith(pref)) && /^[A-Z0-9]{6,10}$/.test(code);
 }
 
-// Obtiene prefijo según familia + duty
-function getPrefix(family, duty) {
-    const fam = normalizeFamily(family);
-    if (!fam) return null;
-
-    const dutyN = duty?.toUpperCase() === "LD" ? "LD" : "HD";
-
-    const entry = PREFIX_TABLE[fam];
-    if (!entry) return null;
-
-    return entry[dutyN] || null;
+/**
+ * Detecta si el código parece OEM real
+ */
+function isOEM(code) {
+    if (!OEM_REGEX.test(code)) return false;
+    return true;
 }
 
-// Para auditorías externas
-function getProtectedRules() {
-    return {
-        version: "3.0",
-        lastUpdate: "2025-11-19",
-        prefixTable: PREFIX_TABLE,
-        familyCanonical: FAMILY_CANONICAL
-    };
+/**
+ * Detecta si es CROSS / AFTERMARKET
+ */
+function isCross(code) {
+    // Tiene formato general pero no OEM => aftermarket
+    return OEM_REGEX.test(code);
+}
+
+/**
+ * Detecta anomalías peligrosas
+ */
+function detectAnomalies(input) {
+    const anomalies = [];
+
+    if (input.length < 3) {
+        anomalies.push("CODE_TOO_SHORT");
+    }
+    if (input.length > 30) {
+        anomalies.push("CODE_TOO_LONG");
+    }
+    if (/\s/.test(input)) {
+        anomalies.push("CONTAINS_SPACES");
+    }
+    if (/[^A-Z0-9\-]/.test(input)) {
+        anomalies.push("INVALID_CHARACTERS");
+    }
+
+    return anomalies;
+}
+
+/**
+ * Protección general del motor
+ */
+function validateInput(code) {
+    if (!code || typeof code !== "string") {
+        return { valid: false, type: "EMPTY", anomalies: ["EMPTY_VALUE"] };
+    }
+
+    const normalized = code.trim().toUpperCase();
+    const anomalies = detectAnomalies(normalized);
+
+    if (isSKU(normalized)) {
+        return { valid: true, type: "SKU", anomalies };
+    }
+
+    if (isOEM(normalized)) {
+        return { valid: true, type: "OEM", anomalies };
+    }
+
+    if (isCross(normalized)) {
+        return { valid: true, type: "CROSS", anomalies };
+    }
+
+    return { valid: false, type: "UNKNOWN", anomalies };
 }
 
 module.exports = {
-    normalizeFamily,
-    getPrefix,
-    getProtectedRules
+    validateInput,
+    isSKU,
+    isOEM,
+    isCross,
+    VALID_PREFIXES,
+    OEM_BRANDS,
+    AFTERMARKET_BRANDS
 };
