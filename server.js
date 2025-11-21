@@ -6,93 +6,77 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
-const bodyParser = require("body-parser");
 
-// NUEVO MOTOR V3
+// Núcleo
 const filterEngine = require("./src/core/filterEngine");
 const homologationDB = require("./src/core/homologationDB");
 const jsonBuilder = require("./src/utils/jsonBuilder");
 
 const app = express();
 app.use(cors());
-app.use(bodyParser.json());
+app.use(express.json());
 
+// ============================================================================
+// HOME
 // ============================================================================
 app.get("/", (req, res) => {
     res.send("ELIMFILTERS API v3.0 — Motor de homologación y búsqueda.");
 });
-// ============================================================================
-
 
 // ============================================================================
 // ENDPOINT PRINCIPAL DE BÚSQUEDA
-// /api/v1/filters/search?code=xxxx
 // ============================================================================
 app.get("/api/v1/filters/search", async (req, res) => {
     try {
-        const inputCode = req.query.code;
+        const code = req.query.code;
 
-        if (!inputCode) {
+        if (!code) {
             return res.status(400).json(
                 jsonBuilder.buildErrorResponse({
                     error: "MISSING_CODE",
-                    message: "Debe enviar el parámetro ?code=XXXXX",
-                    ok: false
+                    message: "Debe enviar ?code=XXXX"
                 })
             );
         }
 
-        console.log(`🔍 Consulta recibida → ${inputCode}`);
+        console.log("🔍 Consulta:", code);
 
-        const result = await filterEngine.processCode(inputCode);
+        const result = await filterEngine.processCode(code);
 
         return res.json(result);
 
     } catch (err) {
-        console.error("❌ ERROR FATAL EN SERVER:", err);
-
+        console.error("❌ SERVER CRASH:", err);
         return res.status(500).json(
             jsonBuilder.buildErrorResponse({
                 error: "SERVER_CRASH",
-                message: "Error interno en el servidor.",
-                details: err.message || "No details",
-                ok: false
+                message: err.message
             })
         );
     }
 });
 
-
 // ============================================================================
-// ENDPOINT — Auditoría de códigos desconocidos
+// AUDITORÍA: MULTI-EQUIVALENCIAS
 // ============================================================================
 app.get("/api/v1/homologation/unknown", (req, res) => {
     try {
-        const list = homologationDB.loadMulti();
-
-        return res.json({
-            ok: true,
-            total: list.length,
-            data: list
-        });
-
+        const data = homologationDB.loadMulti();
+        res.json({ ok: true, total: data.length, data });
     } catch (err) {
-        return res.status(500).json(
+        res.status(500).json(
             jsonBuilder.buildErrorResponse({
                 error: "HOMOLOGATION_READ_ERROR",
-                message: "No se pudieron cargar los códigos desconocidos.",
-                details: err.message
+                message: err.message
             })
         );
     }
 });
 
-
 // ============================================================================
-// ACTIVAR SERVIDOR
+// SERVIDOR
 // ============================================================================
-const PORT = process.env.PORT || 3000;
-
+const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
-    console.log(`🚀 ELIMFILTERS API v3.0 funcionando en puerto ${PORT}`);
+    console.log(`🚀 ELIMFILTERS API v3.0 running on port ${PORT}`);
 });
