@@ -10,7 +10,7 @@ RUN npm install morgan --save --no-audit --no-fund
 
 COPY . .
 
-EXPOSE 8080
+EXPOSE 3000
 
 CMD ["node", "server.js"]
 
