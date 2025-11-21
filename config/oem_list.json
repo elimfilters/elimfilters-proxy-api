@@ -1,0 +1,33 @@
+{
+  "OEM": [
+    "CATERPILLAR",
+    "KOMATSU",
+    "TOYOTA",
+    "NISSAN",
+    "JOHN DEERE",
+    "FORD",
+    "VOLVO CE",
+    "VOLVO TRUCKS",
+    "KUBOTA",
+    "HITACHI",
+    "CASE",
+    "NEW HOLLAND",
+    "ISUZU",
+    "HINO",
+    "YANMAR",
+    "MITSUBISHI FUSO",
+    "HYUNDAI CONSTRUCTION",
+    "SCANIA",
+    "MERCEDES-BENZ",
+    "CUMMINS",
+    "PERKINS",
+    "DOOSAN",
+    "MACK",
+    "MAN",
+    "RENAULT TRUCKS",
+    "DEUTZ",
+    "DETROIT DIESEL",
+    "INTERNATIONAL",
+    "NAVISTAR"
+  ]
+}
