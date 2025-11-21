@@ -1,4 +1,4 @@
-// server.js v4.3.0 - FINAL COMPLETO
+// server.js v4.3.1 - CORREGIDO (con endpoint /api/v1/filters/search)
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -31,7 +31,7 @@ const { detectFilter, setSheetsInstance } = require('./detectionService');
 // Inicializar Google Sheets
 const sheetsService = new GoogleSheetsService();
 
-console.log('🚀 [SERVER] Iniciando servidor v4.3...');
+console.log('🚀 [SERVER] Iniciando servidor v4.3.1...');
 
 // Health check
 app.get('/health', (req, res) => {
@@ -118,6 +118,49 @@ app.get('/api/detect-filter', async (req, res) => {
   }
 });
 
+// ============================================================================
+// NUEVO ENDPOINT: /api/v1/filters/search (para compatibilidad)
+// ============================================================================
+app.get('/api/v1/filters/search', async (req, res) => {
+  try {
+    const { code } = req.query;
+    
+    if (!code) {
+      return res.status(400).json({ 
+        status: 'ERROR',
+        message: 'Query parameter "code" required',
+        example: '/api/v1/filters/search?code=1R1807'
+      });
+    }
+
+    console.log(`🔍 [API v1] Query: ${code}`);
+
+    const cacheKey = `filter_${code.toUpperCase()}`;
+    const cached = cache.get(cacheKey);
+    
+    if (cached) {
+      console.log(`✅ [CACHE] Hit`);
+      return res.json({ ...cached, from_cache: true });
+    }
+
+    const result = await detectFilter(code, sheetsService);
+    
+    if (result.status === 'OK') {
+      cache.set(cacheKey, result);
+    }
+
+    console.log(`✅ [API v1] SKU: ${result.sku}`);
+    res.json(result);
+
+  } catch (error) {
+    console.error('❌ [API v1] Error:', error.message);
+    res.status(500).json({
+      status: 'ERROR',
+      message: error.message
+    });
+  }
+});
+
 // Iniciar servidor
 async function startServer() {
   try {
@@ -130,6 +173,7 @@ async function startServer() {
       console.log(`✅ Servidor en puerto ${PORT}`);
       console.log(`📡 POST: /api/detect-filter`);
       console.log(`📡 GET:  /api/detect-filter?q=XXX`);
+      console.log(`📡 GET:  /api/v1/filters/search?code=XXX`);
       console.log(`📡 Health: /health`);
     });
 
