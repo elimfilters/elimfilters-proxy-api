@@ -1,82 +1,219 @@
 // ============================================================================
-// ELIMFILTERS — API SERVER v3.0
-// Motor oficial de consulta: OEM, CROSS, SKU, multi-equivalencias.
+// ELIMFILTERS — API SERVER v4.5 FINAL
+// Sistema funcional con endpoints legacy y nuevos
 // ============================================================================
 
-require("dotenv").config();
-const express = require("express");
-const cors = require("cors");
-
-// Núcleo
-const filterEngine = require("./src/core/filterEngine");
-const homologationDB = require("./src/core/homologationDB");
-const jsonBuilder = require("./src/utils/jsonBuilder");
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const morgan = require('morgan');
+const NodeCache = require('node-cache');
 
 const app = express();
-app.use(cors());
-app.use(express.json());
-
-// ============================================================================
-// HOME
-// ============================================================================
-app.get("/", (req, res) => {
-    res.send("ELIMFILTERS API v3.0 — Motor de homologación y búsqueda.");
-});
-
-// ============================================================================
-// ENDPOINT PRINCIPAL DE BÚSQUEDA
-// ============================================================================
-app.get("/api/v1/filters/search", async (req, res) => {
-    try {
-        const code = req.query.code;
-
-        if (!code) {
-            return res.status(400).json(
-                jsonBuilder.buildErrorResponse({
-                    error: "MISSING_CODE",
-                    message: "Debe enviar ?code=XXXX"
-                })
-            );
-        }
-
-        console.log("🔍 Consulta:", code);
-
-        const result = await filterEngine.processCode(code);
-
-        return res.json(result);
-
-    } catch (err) {
-        console.error("❌ SERVER CRASH:", err);
-        return res.status(500).json(
-            jsonBuilder.buildErrorResponse({
-                error: "SERVER_CRASH",
-                message: err.message
-            })
-        );
-    }
-});
-
-// ============================================================================
-// AUDITORÍA: MULTI-EQUIVALENCIAS
-// ============================================================================
-app.get("/api/v1/homologation/unknown", (req, res) => {
-    try {
-        const data = homologationDB.loadMulti();
-        res.json({ ok: true, total: data.length, data });
-    } catch (err) {
-        res.status(500).json(
-            jsonBuilder.buildErrorResponse({
-                error: "HOMOLOGATION_READ_ERROR",
-                message: err.message
-            })
-        );
-    }
-});
-
-// ============================================================================
-// SERVIDOR
-// ============================================================================
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => {
-    console.log(`🚀 ELIMFILTERS API v3.0 running on port ${PORT}`);
+
+// Cache (5 minutos)
+const cache = new NodeCache({ stdTTL: 300 });
+
+// Middlewares
+app.use(cors({
+  origin: [
+    'https://elimfilters.com',
+    'https://www.elimfilters.com',
+    'http://localhost:8000',
+    'http://localhost:3000'
+  ],
+  credentials: true
+}));
+app.use(express.json());
+app.use(morgan('dev'));
+
+// Importar servicios
+const GoogleSheetsService = require('./googleSheetsConnector');
+const { detectFilter, setSheetsInstance } = require('./detectionService');
+
+// Inicializar Google Sheets
+const sheetsService = new GoogleSheetsService();
+
+console.log('🚀 [SERVER] Iniciando servidor v4.5 FINAL...');
+
+// ============================================================================
+// HEALTH CHECK
+// ============================================================================
+app.get('/health', (req, res) => {
+  res.status(200).send('OK');
 });
+
+app.get('/', (req, res) => {
+  res.json({
+    service: 'ELIMFILTERS API',
+    version: '4.5',
+    status: 'online',
+    endpoints: {
+      legacy: {
+        post: '/api/detect-filter',
+        get: '/api/detect-filter?q=XXX'
+      },
+      v1: {
+        get: '/api/v1/filters/search?code=XXX'
+      },
+      health: '/health'
+    }
+  });
+});
+
+// ============================================================================
+// ENDPOINT LEGACY: POST /api/detect-filter
+// ============================================================================
+app.post('/api/detect-filter', async (req, res) => {
+  try {
+    const { q } = req.body;
+    
+    if (!q) {
+      return res.status(400).json({ 
+        status: 'ERROR',
+        message: 'Query parameter "q" is required'
+      });
+    }
+
+    console.log(`🔍 [POST] Query: ${q}`);
+
+    const cacheKey = `filter_${q.toUpperCase()}`;
+    const cached = cache.get(cacheKey);
+    
+    if (cached) {
+      console.log(`✅ [CACHE] Hit`);
+      return res.json({ ...cached, from_cache: true });
+    }
+
+    const result = await detectFilter(q, sheetsService);
+    
+    if (result.status === 'OK') {
+      cache.set(cacheKey, result);
+    }
+
+    console.log(`✅ [POST] SKU: ${result.sku || 'N/A'}`);
+    res.json(result);
+
+  } catch (error) {
+    console.error('❌ [POST] Error:', error.message);
+    res.status(500).json({
+      status: 'ERROR',
+      message: error.message
+    });
+  }
+});
+
+// ============================================================================
+// ENDPOINT LEGACY: GET /api/detect-filter?q=XXX
+// ============================================================================
+app.get('/api/detect-filter', async (req, res) => {
+  try {
+    const { q } = req.query;
+    
+    if (!q) {
+      return res.status(400).json({ 
+        status: 'ERROR',
+        message: 'Query parameter "q" required',
+        example: '/api/detect-filter?q=P551551'
+      });
+    }
+
+    console.log(`🔍 [GET] Query: ${q}`);
+
+    const cacheKey = `filter_${q.toUpperCase()}`;
+    const cached = cache.get(cacheKey);
+    
+    if (cached) {
+      console.log(`✅ [CACHE] Hit`);
+      return res.json({ ...cached, from_cache: true });
+    }
+
+    const result = await detectFilter(q, sheetsService);
+    
+    if (result.status === 'OK') {
+      cache.set(cacheKey, result);
+    }
+
+    console.log(`✅ [GET] SKU: ${result.sku || 'N/A'}`);
+    res.json(result);
+
+  } catch (error) {
+    console.error('❌ [GET] Error:', error.message);
+    res.status(500).json({
+      status: 'ERROR',
+      message: error.message
+    });
+  }
+});
+
+// ============================================================================
+// ENDPOINT V1: GET /api/v1/filters/search?code=XXX
+// ============================================================================
+app.get('/api/v1/filters/search', async (req, res) => {
+  try {
+    const { code } = req.query;
+    
+    if (!code) {
+      return res.status(400).json({ 
+        status: 'ERROR',
+        message: 'Query parameter "code" required',
+        example: '/api/v1/filters/search?code=1R1807'
+      });
+    }
+
+    console.log(`🔍 [v1] Query: ${code}`);
+
+    const cacheKey = `filter_${code.toUpperCase()}`;
+    const cached = cache.get(cacheKey);
+    
+    if (cached) {
+      console.log(`✅ [CACHE] Hit`);
+      return res.json({ ...cached, from_cache: true });
+    }
+
+    const result = await detectFilter(code, sheetsService);
+    
+    if (result.status === 'OK') {
+      cache.set(cacheKey, result);
+    }
+
+    console.log(`✅ [v1] SKU: ${result.sku || 'N/A'}`);
+    res.json(result);
+
+  } catch (error) {
+    console.error('❌ [v1] Error:', error.message);
+    res.status(500).json({
+      status: 'ERROR',
+      message: error.message
+    });
+  }
+});
+
+// ============================================================================
+// INICIAR SERVIDOR
+// ============================================================================
+async function startServer() {
+  try {
+    console.log('🟡 Iniciando Google Sheets...');
+    await sheetsService.initialize();
+    setSheetsInstance(sheetsService);
+    console.log('✅ Google Sheets conectado');
+
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`✅ Servidor activo en puerto ${PORT}`);
+      console.log(`📡 Legacy POST: /api/detect-filter`);
+      console.log(`📡 Legacy GET:  /api/detect-filter?q=XXX`);
+      console.log(`📡 V1 GET:      /api/v1/filters/search?code=XXX`);
+      console.log(`📡 Health:      /health`);
+      console.log(``);
+      console.log(`🌐 Sistema listo para recibir peticiones`);
+    });
+
+  } catch (error) {
+    console.error('❌ ERROR CRÍTICO al iniciar:', error.message);
+    process.exit(1);
+  }
+}
+
+startServer();
