@@ -12,6 +12,6 @@ COPY . .
 
 EXPOSE 8080
 
- CMD ["node", "dist-server/server.js"]
+CMD ["node", "server.js"]
 
 # Updated 2025-11-17
