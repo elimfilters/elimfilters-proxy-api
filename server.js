@@ -1,6 +1,6 @@
 // ============================================================================
-// ELIMFILTERS — API SERVER v4.5 FINAL
-// Sistema funcional con endpoints legacy y nuevos
+// ELIMFILTERS — API SERVER v4.6 FINAL CORREGIDO
+// Sistema funcional sin GoogleSheetsService class
 // ============================================================================
 
 require('dotenv').config();
@@ -29,13 +29,9 @@ app.use(express.json());
 app.use(morgan('dev'));
 
 // Importar servicios
-const GoogleSheetsService = require('./googleSheetsConnector');
-const { detectFilter, setSheetsInstance } = require('./detectionService');
+const { detectFilter } = require('./detectionService');
 
-// Inicializar Google Sheets
-const sheetsService = new GoogleSheetsService();
-
-console.log('🚀 [SERVER] Iniciando servidor v4.5 FINAL...');
+console.log('🚀 [SERVER] Iniciando servidor v4.6 FINAL...');
 
 // ============================================================================
 // HEALTH CHECK
@@ -47,7 +43,7 @@ app.get('/health', (req, res) => {
 app.get('/', (req, res) => {
   res.json({
     service: 'ELIMFILTERS API',
-    version: '4.5',
+    version: '4.6',
     status: 'online',
     endpoints: {
       legacy: {
@@ -86,7 +82,7 @@ app.post('/api/detect-filter', async (req, res) => {
       return res.json({ ...cached, from_cache: true });
     }
 
-    const result = await detectFilter(q, sheetsService);
+    const result = await detectFilter(q);
     
     if (result.status === 'OK') {
       cache.set(cacheKey, result);
@@ -129,7 +125,7 @@ app.get('/api/detect-filter', async (req, res) => {
       return res.json({ ...cached, from_cache: true });
     }
 
-    const result = await detectFilter(q, sheetsService);
+    const result = await detectFilter(q);
     
     if (result.status === 'OK') {
       cache.set(cacheKey, result);
@@ -172,7 +168,7 @@ app.get('/api/v1/filters/search', async (req, res) => {
       return res.json({ ...cached, from_cache: true });
     }
 
-    const result = await detectFilter(code, sheetsService);
+    const result = await detectFilter(code);
     
     if (result.status === 'OK') {
       cache.set(cacheKey, result);
@@ -193,27 +189,12 @@ app.get('/api/v1/filters/search', async (req, res) => {
 // ============================================================================
 // INICIAR SERVIDOR
 // ============================================================================
-async function startServer() {
-  try {
-    console.log('🟡 Iniciando Google Sheets...');
-    await sheetsService.initialize();
-    setSheetsInstance(sheetsService);
-    console.log('✅ Google Sheets conectado');
-
-    app.listen(PORT, '0.0.0.0', () => {
-      console.log(`✅ Servidor activo en puerto ${PORT}`);
-      console.log(`📡 Legacy POST: /api/detect-filter`);
-      console.log(`📡 Legacy GET:  /api/detect-filter?q=XXX`);
-      console.log(`📡 V1 GET:      /api/v1/filters/search?code=XXX`);
-      console.log(`📡 Health:      /health`);
-      console.log(``);
-      console.log(`🌐 Sistema listo para recibir peticiones`);
-    });
-
-  } catch (error) {
-    console.error('❌ ERROR CRÍTICO al iniciar:', error.message);
-    process.exit(1);
-  }
-}
-
-startServer();
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ Servidor activo en puerto ${PORT}`);
+  console.log(`📡 Legacy POST: /api/detect-filter`);
+  console.log(`📡 Legacy GET:  /api/detect-filter?q=XXX`);
+  console.log(`📡 V1 GET:      /api/v1/filters/search?code=XXX`);
+  console.log(`📡 Health:      /health`);
+  console.log(``);
+  console.log(`🌐 Sistema listo`);
+});
