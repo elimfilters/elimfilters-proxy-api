@@ -1,28 +1,29 @@
 {
-  "name": "elimfilters-proxy-api",
-  "version": "5.1.0",
-  "description": "API para búsqueda y homologación de filtros.",
-  "main": "server.js",
-  "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js"
-  },
-  "keywords": [
-    "express",
-    "mongoose",
-    "scraper",
-    "filters"
-  ],
-  "author": "",
-  "license": "ISC",
-  "dependencies": {
-    "axios": "^1.6.8",
-    "cheerio": "^1.0.0-rc.12",
-    "cors": "^2.8.5",
-    "express": "^4.18.2",
-    "mongoose": "^8.3.1",
-    "morgan": "^1.10.0",
-    "node-cache": "^5.1.2",
-    "nodemon": "^3.1.0"
-  }
-}
+      "name": "elimfilters-proxy-api",
+      "version": "5.1.0",
+      "description": "API para búsqueda y homologación de filtros.",
+      "main": "server.js",
+      "scripts": {
+        "start": "node server.js",
+        "dev": "nodemon server.js"
+      },
+      "keywords": [
+        "express",
+        "mongoose",
+        "scraper",
+        "filters"
+      ],
+      "author": "",
+      "license": "ISC",
+      "dependencies": {
+        "axios": "^1.6.8",
+        "cheerio": "^1.0.0-rc.12",
+        "cors": "^2.8.5",
+        "express": "^4.18.2",
+        "mongoose": "^8.3.1",
+        "morgan": "^1.10.0",
+        "node-cache": "^5.1.2",
+        "nodemon": "^3.1.0",
+        "googleapis": "^128.0.0" 
+      }
+    }
