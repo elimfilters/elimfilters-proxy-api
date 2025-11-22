@@ -4,7 +4,7 @@
 // ============================================================================
 
 const sheets = require("./googleSheetsConnector");
-const rulesProtection = require("../core/rulesProtection");
+const rulesProtection = require("./rulesProtection");
 
 // ============================================================================
 // NORMALIZAR COLUMNAS VACÍAS
