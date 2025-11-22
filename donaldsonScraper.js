@@ -1,193 +1,148 @@
-// donaldsonScraper.js v2.0.0 - CON AXIOS + CHEERIO (Sin Puppeteer)
 const axios = require('axios');
 const cheerio = require('cheerio');
 
-/**
- * Busca código Donaldson desde OEM
- */
-async function searchDonaldsonEquivalent(oemCode) {
-  console.log(`🔍 [Donaldson] Buscando equivalente para: ${oemCode}`);
-
-  try {
-    const searchUrl = `https://www.donaldson.com/en-us/cross-reference/?q=${encodeURIComponent(oemCode)}`;
-    const response = await axios.get(searchUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9'
-      },
-      timeout: 15000
-    });
-
-    const $ = cheerio.load(response.data);
-    let donaldsonCode = null;
-    const selectors = ['.donaldson-part', '.part-number', '[data-part-number]', '.product-number', 'td:contains("Donaldson")', '.cross-reference td'];
-
-    for (const selector of selectors) {
-      $(selector).each((i, elem) => {
-        if (donaldsonCode) return;
-        const text = $(elem).text().trim();
-        const match = text.match(/P\d{6}/);
-        if (match) donaldsonCode = match[0];
-      });
-      if (donaldsonCode) break;
-    }
-
-    if (!donaldsonCode) {
-      const bodyText = $('body').text();
-      const match = bodyText.match(/P\d{6}/);
-      if (match) donaldsonCode = match[0];
-    }
-
-    if (donaldsonCode) {
-      console.log(`✅ [Donaldson] Encontrado: ${oemCode} → ${donaldsonCode}`);
-      return donaldsonCode;
-    }
-
-    console.log(`⚠️ [Donaldson] No se encontró equivalente para: ${oemCode}`);
-    return null;
-  } catch (error) {
-    console.error(`❌ [Donaldson] Error buscando: ${error.message}`);
-    return null;
-  }
-}
+// Modelo de datos para el filtro
+const filterDataModel = () => ({
+    found: false,
+    donaldson_code: null,
+    product_type: '',
+    cross_references: [],
+    equipment_applications: [], // Incluye Engine y Equipment
+    attributes: {},
+    description: ''
+});
 
 /**
- * Scrape página de producto Donaldson
+ * Función central para obtener datos del filtro de Donaldson
+ * @param {string} donaldsonCode Código Pxxxxxx de Donaldson
+ * @returns {Promise<object>} Datos del filtro extraídos
  */
 async function scrapeDonaldsonProductPage(donaldsonCode) {
-  console.log(`📄 [Donaldson] Scraping: ${donaldsonCode}`);
+    console.log(`📄 [Donaldson] Scraping: ${donaldsonCode}`);
+    const data = filterDataModel();
+    data.donaldson_code = donaldsonCode;
 
-  try {
-    const productUrl = `https://www.donaldson.com/en-us/industrial/products/${donaldsonCode}`;
-    const response = await axios.get(productUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-      },
-      timeout: 15000
-    });
+    try {
+        // La URL de un producto real de Donaldson con código Pxxxxxx
+        const productUrl = `https://shop.donaldson.com/store/en-us/product/${donaldsonCode}/80`;
+        const response = await axios.get(productUrl, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+            },
+            timeout: 20000 // Aumentado el timeout
+        });
 
-    const $ = cheerio.load(response.data);
-    const data = {
-      cross_references: [],
-      oem_codes: [],
-      engine_applications: [],
-      equipment_applications: [],
-      specs: {},
-      description: ''
-    };
+        const $ = cheerio.load(response.data);
+        data.found = true;
 
-    $('.cross-reference, .competitor-part, .interchange').each((i, elem) => {
-      if (data.cross_references.length < 10) {
-        const text = $(elem).text().trim();
-        if (text && text.length > 3 && text.length < 50) {
-          data.cross_references.push(text);
+        // 1. EXTRAER ATRIBUTOS (Ficha técnica/OEM Codes)
+        // La información de atributos suele estar en tablas de especificaciones
+        $('.product-details-table tr').each((i, row) => {
+            const label = $(row).find('td:nth-child(1)').text().trim().replace(/[:\n]/g, '').toLowerCase();
+            const value = $(row).find('td:nth-child(2)').text().trim();
+
+            if (label && value) {
+                // Capturar OEM codes (si están listados como 'Primary Application')
+                if (label.includes('primary application') || label.includes('oem')) {
+                    data.attributes.primary_oem_code = value;
+                }
+                // Capturar el resto de atributos
+                data.attributes[label.replace(/\s/g, '_')] = value;
+            }
+        });
+
+        // 2. EXTRAER REFERENCIAS CRUZADAS (Pestaña "Cross Reference")
+        // Buscar la sección de cruces. A menudo son listas de Fabricante/Parte.
+        $('#cross-reference-list tbody tr').each((i, row) => {
+            const manufacturer = $(row).find('td:nth-child(1)').text().trim();
+            const partNumber = $(row).find('td:nth-child(2)').text().trim();
+
+            if (manufacturer && partNumber) {
+                data.cross_references.push({
+                    manufacturer: manufacturer,
+                    part_number: partNumber
+                });
+            }
+        });
+        
+        // Intento secundario si el selector #cross-reference-list no funciona (puede variar)
+        if (data.cross_references.length === 0) {
+             $('.cross-reference-section table tbody tr').each((i, row) => {
+                const manufacturer = $(row).find('td:nth-child(1)').text().trim();
+                const partNumber = $(row).find('td:nth-child(2)').text().trim();
+                if (manufacturer && partNumber) {
+                    data.cross_references.push({ manufacturer, part_number: partNumber });
+                }
+            });
         }
-      }
-    });
 
-    $('.oem-code, .oem-number, .original-equipment').each((i, elem) => {
-      if (data.oem_codes.length < 10) {
-        const text = $(elem).text().trim();
-        if (text && text.length > 3 && text.length < 30) {
-          data.oem_codes.push(text);
+
+        // 3. EXTRAER APLICACIONES (Pestaña "Equipment Applications")
+        // Buscar la tabla de aplicaciones. Este selector es crítico y debe ser exacto.
+        $('#equipment-application-table tbody tr').each((i, row) => {
+            const equipment = $(row).find('td:nth-child(1)').text().trim();
+            // Columna de Tipo de Equipo puede ser la 3 (index 2)
+            const equipmentType = $(row).find('td:nth-child(3)').text().trim(); 
+            // Columna de Motor puede ser la 5 (index 4)
+            const engine = $(row).find('td:nth-child(5)').text().trim(); 
+
+            if (equipment && engine) {
+                data.equipment_applications.push({
+                    equipment: equipment,
+                    type: equipmentType,
+                    engine: engine
+                });
+            }
+        });
+        
+        // Intento secundario si el selector #equipment-application-table no funciona
+        if (data.equipment_applications.length === 0) {
+            $('.application-details table tbody tr').each((i, row) => {
+                const equipment = $(row).find('td:nth-child(1)').text().trim();
+                const engine = $(row).find('td:nth-child(2)').text().trim(); 
+                if (equipment && engine) {
+                    data.equipment_applications.push({ equipment, engine, type: 'N/A' });
+                }
+            });
         }
-      }
-    });
 
-    $('.engine-application, .engine, .motor-application').each((i, elem) => {
-      if (data.engine_applications.length < 10) {
-        const text = $(elem).text().trim();
-        if (text && text.length > 5 && text.length < 100) {
-          data.engine_applications.push(text);
+        console.log(`✅ [Donaldson] Datos extraídos: ${data.cross_references.length} refs, ${data.equipment_applications.length} aplicaciones.`);
+        return data;
+
+    } catch (error) {
+        if (error.response && error.response.status === 404) {
+             console.log(`⚠️ [Donaldson] Producto no encontrado (404) para ${donaldsonCode}`);
+        } else {
+            console.error(`❌ [Donaldson] Error scraping ${donaldsonCode}: ${error.message}`);
         }
-      }
-    });
-
-    $('.equipment-application, .vehicle-application, .machine-application').each((i, elem) => {
-      if (data.equipment_applications.length < 10) {
-        const text = $(elem).text().trim();
-        if (text && text.length > 5 && text.length < 100) {
-          data.equipment_applications.push(text);
-        }
-      }
-    });
-
-    $('.specification, .spec, .technical-data').each((i, elem) => {
-      const label = $(elem).find('.label, .spec-name').text().trim();
-      const value = $(elem).find('.value, .spec-value').text().trim();
-
-      if (label && value) {
-        if (label.toLowerCase().includes('flow')) data.specs.rated_flow_gpm = value.replace(/[^\d.]/g, '');
-        if (label.toLowerCase().includes('service') || label.toLowerCase().includes('life')) data.specs.service_life_hours = value.replace(/[^\d.]/g, '');
-        if (label.toLowerCase().includes('micron')) data.specs.micron_rating = value.replace(/[^\d.]/g, '');
-        if (label.toLowerCase().includes('pressure')) data.specs.collapse_pressure_psi = value.replace(/[^\d.]/g, '');
-      }
-    });
-
-    const descSelectors = ['.product-description', '.description', '[itemprop="description"]', '.overview', 'meta[name="description"]'];
-    for (const selector of descSelectors) {
-      const desc = $(selector).attr('content') || $(selector).text().trim();
-      if (desc && desc.length > 20) {
-        data.description = desc.substring(0, 500);
-        break;
-      }
+        return data;
     }
-
-    console.log(`✅ [Donaldson] Datos extraídos: ${data.cross_references.length} refs, ${data.oem_codes.length} OEMs`);
-    return data;
-  } catch (error) {
-    console.error(`❌ [Donaldson] Error scraping: ${error.message}`);
-    return {
-      cross_references: [],
-      oem_codes: [],
-      engine_applications: [],
-      equipment_applications: [],
-      specs: {},
-      description: ''
-    };
-  }
 }
 
 /**
- * Función completa: busca + scrape
+ * Función completa: busca + scrape (Simplificada: asume que ya tienes el código Pxxxxxx)
  */
-async function getDonaldsonData(oemCode) {
-  console.log(`🚀 [Donaldson] Proceso completo: ${oemCode}`);
-  try {
-    const donaldsonCode = await searchDonaldsonEquivalent(oemCode);
-    if (!donaldsonCode) {
-      return {
-        found: false,
-        donaldson_code: null,
-        cross_references: [],
-        oem_codes: [],
-        engine_applications: [],
-        equipment_applications: [],
-        specs: {},
-        description: ''
-      };
+async function getDonaldsonData(donaldsonCode) {
+    console.log(`🚀 [Donaldson] Proceso completo: ${donaldsonCode}`);
+    
+    // NOTA: La función searchDonaldsonEquivalent fue eliminada o simplificada 
+    // porque el proceso es mejor si se cruza externamente al P-code y se 
+    // llama directamente a scrapeDonaldsonProductPage.
+    
+    // Si el código no comienza con 'P', puedes intentar buscar el equivalente aquí, 
+    // pero el proceso es más complejo que un simple regex.
+    
+    if (!donaldsonCode.startsWith('P')) {
+        console.error("❌ Se requiere un código Donaldson (Pxxxxxx) para el scraper directo.");
+        return filterDataModel();
     }
+    
     const productData = await scrapeDonaldsonProductPage(donaldsonCode);
-    return { found: true, donaldson_code: donaldsonCode, ...productData };
-  } catch (error) {
-    console.error(`❌ [Donaldson] Error proceso completo: ${error.message}`);
-    return {
-      found: false,
-      donaldson_code: null,
-      cross_references: [],
-      oem_codes: [],
-      engine_applications: [],
-      equipment_applications: [],
-      specs: {},
-      description: ''
-    };
-  }
+    return productData;
 }
 
 module.exports = {
-  searchDonaldsonEquivalent,
-  scrapeDonaldsonProductPage,
-  getDonaldsonData
+    // searchDonaldsonEquivalent, // Ya no es necesario si cruzas antes
+    getDonaldsonData
 };
