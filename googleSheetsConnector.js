@@ -102,32 +102,17 @@ async function findExactCode(code) {
         return true;
       }
       
-      // 3. Buscar en source_code
-      if (r.source_code && r.source_code.toUpperCase() === codeUpper) {
-        console.log(`✅ Encontrado en campo source_code`);
-        return true;
-      }
-      
-      // 4. Buscar en query_norm
+      // 3. Buscar en query_norm
       if (r.query_norm && r.query_norm.toUpperCase() === codeUpper) {
         console.log(`✅ Encontrado en campo query_norm`);
         return true;
       }
       
-      // 5. Buscar en cross_reference (array separado por comas)
+      // 4. Buscar en cross_reference (array separado por comas)
       if (r.cross_reference) {
         const crossRefs = r.cross_reference.split(',').map(s => s.trim().toUpperCase());
         if (crossRefs.includes(codeUpper)) {
           console.log(`✅ Encontrado en cross_reference`);
-          return true;
-        }
-      }
-      
-      // 6. Buscar en oem_codes (array separado por comas)
-      if (r.oem_codes) {
-        const oemCodes = r.oem_codes.split(',').map(s => s.trim().toUpperCase());
-        if (oemCodes.includes(codeUpper)) {
-          console.log(`✅ Encontrado en oem_codes`);
           return true;
         }
       }
@@ -137,7 +122,10 @@ async function findExactCode(code) {
     
     if (found) {
       console.log(`✅ [Sheets] Código encontrado - SKU: ${found.sku}`);
-      return found;
+      
+      // Mapear datos del Sheet al formato esperado por detectionService
+      const mappedData = mapSheetToStandard(found);
+      return mappedData;
     }
     
     console.log(`⚠️ [Sheets] Código no encontrado`);
@@ -150,28 +138,115 @@ async function findExactCode(code) {
 }
 
 // ============================================================================
+// MAPEAR DATOS DEL SHEET AL FORMATO ESTÁNDAR
+// ============================================================================
+function mapSheetToStandard(sheetRow) {
+  // Construir objeto specs desde columnas individuales
+  const specs = {};
+  
+  if (sheetRow.height_mm) specs.height_mm = sheetRow.height_mm;
+  if (sheetRow.outer_diameter_mm) specs.outer_diameter_mm = sheetRow.outer_diameter_mm;
+  if (sheetRow.thread_size) specs.thread_size = sheetRow.thread_size;
+  if (sheetRow.gasket_od_mm) specs.gasket_od_mm = sheetRow.gasket_od_mm;
+  if (sheetRow.gasket_id_mm) specs.gasket_id_mm = sheetRow.gasket_id_mm;
+  if (sheetRow.bypass_valve_psi) specs.bypass_valve_psi = sheetRow.bypass_valve_psi;
+  if (sheetRow.micron_rating) specs.micron_rating = sheetRow.micron_rating;
+  if (sheetRow.iso_main_efficiency_percent) specs.iso_main_efficiency_percent = sheetRow.iso_main_efficiency_percent;
+  if (sheetRow.iso_test_method) specs.iso_test_method = sheetRow.iso_test_method;
+  if (sheetRow.beta_200) specs.beta_200 = sheetRow.beta_200;
+  if (sheetRow.hydrostatic_burst_psi) specs.hydrostatic_burst_psi = sheetRow.hydrostatic_burst_psi;
+  if (sheetRow.dirt_capacity_grams) specs.dirt_capacity_grams = sheetRow.dirt_capacity_grams;
+  if (sheetRow.rated_flow_cfm) specs.rated_flow_cfm = sheetRow.rated_flow_cfm;
+  if (sheetRow.rated_flow_gpm) specs.rated_flow_gpm = sheetRow.rated_flow_gpm;
+  if (sheetRow.panel_width_mm) specs.panel_width_mm = sheetRow.panel_width_mm;
+  if (sheetRow.panel_depth_mm) specs.panel_depth_mm = sheetRow.panel_depth_mm;
+  if (sheetRow.manufacturing_standards) specs.manufacturing_standards = sheetRow.manufacturing_standards;
+  if (sheetRow.certification_standards) specs.certification_standards = sheetRow.certification_standards;
+  if (sheetRow.operating_pressure_min_psi) specs.operating_pressure_min_psi = sheetRow.operating_pressure_min_psi;
+  if (sheetRow.operating_pressure_max_psi) specs.operating_pressure_max_psi = sheetRow.operating_pressure_max_psi;
+  if (sheetRow.operating_temperature_min_c) specs.operating_temperature_min_c = sheetRow.operating_temperature_min_c;
+  if (sheetRow.operating_temperature_max_c) specs.operating_temperature_max_c = sheetRow.operating_temperature_max_c;
+  if (sheetRow.fluid_compatibility) specs.fluid_compatibility = sheetRow.fluid_compatibility;
+  if (sheetRow.disposal_method) specs.disposal_method = sheetRow.disposal_method;
+  if (sheetRow.weight_grams) specs.weight_grams = sheetRow.weight_grams;
+  if (sheetRow.service_life_hours) specs.service_life_hours = sheetRow.service_life_hours;
+  if (sheetRow.change_interval_km) specs.change_interval_km = sheetRow.change_interval_km;
+  if (sheetRow.water_separation_efficiency_percent) specs.water_separation_efficiency_percent = sheetRow.water_separation_efficiency_percent;
+  if (sheetRow.drain_type) specs.drain_type = sheetRow.drain_type;
+  if (sheetRow.media_type) specs.media_type = sheetRow.media_type;
+  
+  return {
+    sku: sheetRow.sku || '',
+    filter_type: sheetRow.family || sheetRow.filter_type || '',
+    duty: sheetRow.duty || '',
+    oem_code: sheetRow.oem_code || '',
+    source_code: sheetRow.oem_code || sheetRow.query_norm || '',
+    query_norm: sheetRow.query_norm || '',
+    source: 'google_sheets',
+    cross_reference: sheetRow.cross_reference || '',
+    oem_codes: sheetRow.oem_code || '',
+    engine_applications: sheetRow.engine_applications || '',
+    equipment_applications: sheetRow.equipment_applications || '',
+    specs: specs,
+    description: sheetRow.description || '',
+    created_at: sheetRow.created_at || new Date().toISOString(),
+    subtype: sheetRow.subtype || ''
+  };
+}
+
+// ============================================================================
 // GUARDAR NUEVO FILTRO (DATOS VERIFICADOS DE WEB)
 // ============================================================================
 async function saveNewFilter(filterData) {
   console.log(`💾 [Sheets] Guardando nuevo filtro: ${filterData.sku}`);
   
   try {
-    // Preparar fila para Google Sheets
+    // Extraer specs individuales del objeto specs
+    const specs = filterData.specs || {};
+    
+    // Preparar fila para Google Sheets (orden según tus columnas)
     const row = [
+      filterData.query_norm || filterData.oem_code || '',
       filterData.sku || '',
-      filterData.filter_type || '',
+      filterData.description || '',
+      filterData.filter_type || '',  // family
       filterData.duty || '',
       filterData.oem_code || '',
-      filterData.source_code || '',
-      filterData.query_norm || '',
-      filterData.source || '',
-      Array.isArray(filterData.cross_reference) ? filterData.cross_reference.join(', ') : '',
-      Array.isArray(filterData.oem_codes) ? filterData.oem_codes.join(', ') : '',
-      Array.isArray(filterData.engine_applications) ? filterData.engine_applications.join(', ') : '',
-      Array.isArray(filterData.equipment_applications) ? filterData.equipment_applications.join(', ') : '',
-      typeof filterData.specs === 'object' ? JSON.stringify(filterData.specs) : '',
-      filterData.description || '',
-      filterData.created_at || new Date().toISOString()
+      Array.isArray(filterData.cross_reference) ? filterData.cross_reference.join(', ') : filterData.cross_reference || '',
+      specs.media_type || '',
+      filterData.filter_type || '',
+      filterData.subtype || '',
+      Array.isArray(filterData.engine_applications) ? filterData.engine_applications.join(', ') : filterData.engine_applications || '',
+      Array.isArray(filterData.equipment_applications) ? filterData.equipment_applications.join(', ') : filterData.equipment_applications || '',
+      specs.height_mm || '',
+      specs.outer_diameter_mm || '',
+      specs.thread_size || '',
+      specs.gasket_od_mm || '',
+      specs.gasket_id_mm || '',
+      specs.bypass_valve_psi || '',
+      specs.micron_rating || '',
+      specs.iso_main_efficiency_percent || '',
+      specs.iso_test_method || '',
+      specs.beta_200 || '',
+      specs.hydrostatic_burst_psi || '',
+      specs.dirt_capacity_grams || '',
+      specs.rated_flow_cfm || '',
+      specs.rated_flow_gpm || '',
+      specs.panel_width_mm || '',
+      specs.panel_depth_mm || '',
+      specs.manufacturing_standards || '',
+      specs.certification_standards || '',
+      specs.operating_pressure_min_psi || '',
+      specs.operating_pressure_max_psi || '',
+      specs.operating_temperature_min_c || '',
+      specs.operating_temperature_max_c || '',
+      specs.fluid_compatibility || '',
+      specs.disposal_method || '',
+      specs.weight_grams || '',
+      specs.service_life_hours || '',
+      specs.change_interval_km || '',
+      specs.water_separation_efficiency_percent || '',
+      specs.drain_type || ''
     ];
     
     await sheetsClient.spreadsheets.values.append({
