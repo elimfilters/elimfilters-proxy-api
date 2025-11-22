@@ -41,8 +41,8 @@ try {
 const SKU_PREFIXES = {
   'OIL': 'EL8',
   'LUBE': 'EL8',
-  'AIR': 'EA',
-  'FUEL': 'EF',
+  'AIR': 'EA1',
+  'FUEL': 'EF9',
   'HYDRAULIC': 'EH6',
   'COOLANT': 'EW7',
   'CABIN': 'EC1',
