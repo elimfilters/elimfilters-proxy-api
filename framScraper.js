@@ -1,250 +1,214 @@
-// framScraper.js v2.0.0 - CON AXIOS + CHEERIO (Sin Puppeteer)
 const axios = require('axios');
 const cheerio = require('cheerio');
 
+// Modelo de datos para el filtro
+const filterDataModel = () => ({
+    found: false,
+    fram_code: null,
+    product_type: '',
+    cross_references: [],
+    equipment_applications: [], // Incluye vehículos y motores
+    attributes: {},
+    description: ''
+});
+
 /**
- * Busca código FRAM desde OEM
+ * Busca código FRAM desde un OEM o código de la competencia.
+ * NOTA: Esta función es propensa a fallos si la página de búsqueda cambia el HTML.
+ * @param {string} oemCode Código OEM o de la competencia
+ * @returns {Promise<string|null>} Código FRAM (PHxxxx, CAxxxx, etc.) o null
  */
 async function searchFRAMEquivalent(oemCode) {
-  console.log(`🔍 [FRAM] Buscando equivalente para: ${oemCode}`);
-  
-  try {
-    // URL de búsqueda FRAM
-    const searchUrl = `https://www.framcatalog.com/search?q=${encodeURIComponent(oemCode)}`;
+    console.log(`🔍 [FRAM] Buscando equivalente para: ${oemCode}`);
     
-    const response = await axios.get(searchUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9'
-      },
-      timeout: 15000
-    });
-    
-    const $ = cheerio.load(response.data);
-    
-    // Buscar código FRAM
-    let framCode = null;
-    
-    const selectors = [
-      '.fram-part',
-      '.part-number',
-      '[data-part-number]',
-      '.product-number',
-      'td:contains("FRAM")',
-      '.search-result .part'
-    ];
-    
-    for (const selector of selectors) {
-      $(selector).each((i, elem) => {
-        if (framCode) return;
-        const text = $(elem).text().trim();
-        // FRAM patterns: PH, CA, CS, CF, FS, CH, BG, G seguido de dígitos
-        const match = text.match(/(PH|CA|CS|CF|FS|CH|BG|G)\d{3,}/);
-        if (match) {
-          framCode = match[0];
+    try {
+        const searchUrl = `https://www.framcatalog.com/search?q=${encodeURIComponent(oemCode)}`;
+        
+        const response = await axios.get(searchUrl, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9'
+            },
+            timeout: 15000
+        });
+        
+        const $ = cheerio.load(response.data);
+        let framCode = null;
+        
+        // SELECTORES AJUSTADOS PARA RESULTADOS DE BÚSQUEDA
+        const searchSelectors = [
+            '.product-listing-item .part-number', // Resultado en una lista
+            'h1.product-code',                     // Título de la página de producto (si hay redirección directa)
+            '.cross-reference-match',              // Coincidencia de cruce
+            'span.part-number-label + span'        // Intento de encontrar el número de pieza
+        ];
+        
+        for (const selector of searchSelectors) {
+            $(selector).each((i, elem) => {
+                if (framCode) return;
+                const text = $(elem).text().trim().toUpperCase();
+                // Patrones de código FRAM
+                const match = text.match(/(PH|CA|CS|CF|FS|CH|BG|G)\d{3,}[A-Z]*/);
+                if (match) {
+                    framCode = match[0];
+                }
+            });
+            if (framCode) break;
         }
-      });
-      if (framCode) break;
+        
+        if (framCode) {
+            console.log(`✅ [FRAM] Encontrado: ${oemCode} → ${framCode}`);
+            return framCode;
+        }
+        
+        console.log(`⚠️ [FRAM] No se encontró equivalente para: ${oemCode}`);
+        return null;
+        
+    } catch (error) {
+        console.error(`❌ [FRAM] Error buscando: ${error.message}`);
+        return null;
     }
-    
-    // Fallback: buscar en todo el texto
-    if (!framCode) {
-      const bodyText = $('body').text();
-      const match = bodyText.match(/(PH|CA|CS|CF|FS|CH|BG|G)\d{3,}/);
-      if (match) framCode = match[0];
-    }
-    
-    if (framCode) {
-      console.log(`✅ [FRAM] Encontrado: ${oemCode} → ${framCode}`);
-      return framCode;
-    }
-    
-    console.log(`⚠️ [FRAM] No se encontró equivalente para: ${oemCode}`);
-    return null;
-    
-  } catch (error) {
-    console.error(`❌ [FRAM] Error buscando: ${error.message}`);
-    return null;
-  }
 }
 
 /**
  * Scrape página de producto FRAM
+ * @param {string} framCode Código FRAM (ej. PH3614)
+ * @returns {Promise<object>} Datos del filtro extraídos
  */
 async function scrapeFRAMProductPage(framCode) {
-  console.log(`📄 [FRAM] Scraping: ${framCode}`);
-  
-  try {
-    const productUrl = `https://www.framcatalog.com/product/${framCode}`;
-    
-    const response = await axios.get(productUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-      },
-      timeout: 15000
-    });
-    
-    const $ = cheerio.load(response.data);
-    
-    const data = {
-      cross_references: [],
-      oem_codes: [],
-      engine_applications: [],
-      equipment_applications: [],
-      specs: {},
-      description: ''
-    };
-    
-    // Extraer cross-references
-    $('.cross-reference, .interchange, .competitor-part').each((i, elem) => {
-      if (data.cross_references.length < 10) {
-        const text = $(elem).text().trim();
-        if (text && text.length > 3 && text.length < 50) {
-          data.cross_references.push(text);
+    console.log(`📄 [FRAM] Scraping: ${framCode}`);
+    const data = filterDataModel();
+    data.fram_code = framCode;
+
+    try {
+        // Usamos la URL canónica de FRAM para el producto
+        const productUrl = `https://www.fram.com/fram-extra-guard-oil-filter-spin-on-${framCode.toLowerCase()}`;
+        
+        const response = await axios.get(productUrl, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+            },
+            timeout: 20000 
+        });
+        
+        const $ = cheerio.load(response.data);
+        data.found = true;
+
+        // --- 1. EXTRAER ATRIBUTOS (Ficha técnica) ---
+        // AJUSTADO: Se asume que las especificaciones están en una tabla o lista de detalles.
+        $('.specs-section table tr, .technical-details-list li').each((i, row) => {
+            const label = $(row).find('.label, .spec-name, th').first().text().trim().replace(/[:\n]/g, '').toLowerCase();
+            const value = $(row).find('.value, .spec-value, td').last().text().trim();
+
+            if (label && value && label.length > 2) {
+                // Normalización y guardado
+                if (label.includes('diámetro exterior') || label.includes('od')) {
+                    data.attributes.outer_diameter = value;
+                } else if (label.includes('hilo') || label.includes('thread')) {
+                    data.attributes.thread_size = value;
+                } else if (label.includes('altura') || label.includes('length')) {
+                    data.attributes.length = value;
+                } else if (label.includes('micrón')) {
+                    data.attributes.micron_rating = value;
+                }
+                
+                data.attributes[label.replace(/\s/g, '_')] = value;
+            }
+        });
+        
+        // --- 2. EXTRAER REFERENCIAS CRUZADAS ---
+        // AJUSTADO: Buscamos la tabla o lista de Intercambio/Equivalentes.
+        $('.interchange-table tbody tr, .cross-reference-data-container table tbody tr').each((i, row) => {
+            const manufacturer = $(row).find('td').eq(0).text().trim();
+            const partNumber = $(row).find('td').eq(1).text().trim();
+
+            if (manufacturer && partNumber && partNumber.length > 3) {
+                data.cross_references.push({
+                    manufacturer: manufacturer,
+                    part_number: partNumber
+                });
+            }
+        });
+
+        // --- 3. EXTRAER APLICACIONES (Vehículo/Motor) ---
+        // AJUSTADO: Buscamos la tabla de compatibilidad de vehículos.
+        $('.vehicle-compatibility-table tbody tr, .application-data-table tbody tr').each((i, row) => {
+            // Asumiendo columnas estándar: Año, Marca, Modelo, Motor
+            const year = $(row).find('td').eq(0).text().trim();
+            const make = $(row).find('td').eq(1).text().trim(); 
+            const model = $(row).find('td').eq(2).text().trim(); 
+            const engine = $(row).find('td').eq(3).text().trim(); 
+
+            if (make && model) {
+                data.equipment_applications.push({
+                    year: year,
+                    make: make,
+                    model: model,
+                    engine: engine 
+                });
+            }
+        });
+
+        // --- 4. EXTRAER DESCRIPCIÓN ---
+        const descSelectors = [
+            '.product-description-full',
+            '[itemprop="description"]'
+        ];
+        
+        for (const selector of descSelectors) {
+            const desc = $(selector).attr('content') || $(selector).text().trim();
+            if (desc && desc.length > 20) {
+                data.description = desc.substring(0, 500).replace(/\s\s+/g, ' ');
+                break;
+            }
         }
-      }
-    });
-    
-    // Extraer OEM codes
-    $('.oem-code, .oem-number, .original-equipment, .oem').each((i, elem) => {
-      if (data.oem_codes.length < 10) {
-        const text = $(elem).text().trim();
-        if (text && text.length > 3 && text.length < 30) {
-          data.oem_codes.push(text);
+        
+        console.log(`✅ [FRAM] Datos extraídos: ${data.cross_references.length} refs, ${data.equipment_applications.length} aplicaciones.`);
+        
+        return data;
+        
+    } catch (error) {
+        if (error.response && error.response.status === 404) {
+             console.log(`⚠️ [FRAM] Producto no encontrado (404) para ${framCode}`);
+        } else {
+            // Capturamos el error de scraping real
+            console.error(`❌ [FRAM] Error scraping ${framCode}: ${error.message}`);
         }
-      }
-    });
-    
-    // Extraer engine applications
-    $('.engine-application, .engine, .motor').each((i, elem) => {
-      if (data.engine_applications.length < 10) {
-        const text = $(elem).text().trim();
-        if (text && text.length > 5 && text.length < 100) {
-          data.engine_applications.push(text);
-        }
-      }
-    });
-    
-    // Extraer vehicle/equipment applications
-    $('.vehicle-application, .vehicle, .equipment, .make-model').each((i, elem) => {
-      if (data.equipment_applications.length < 10) {
-        const text = $(elem).text().trim();
-        if (text && text.length > 5 && text.length < 100) {
-          data.equipment_applications.push(text);
-        }
-      }
-    });
-    
-    // Extraer specs
-    $('.specification, .spec, .technical').each((i, elem) => {
-      const label = $(elem).find('.label, .name').text().trim();
-      const value = $(elem).find('.value, .data').text().trim();
-      
-      if (label && value) {
-        if (label.toLowerCase().includes('flow')) {
-          data.specs.rated_flow_gpm = value.replace(/[^\d.]/g, '');
-        }
-        if (label.toLowerCase().includes('service') || label.toLowerCase().includes('life')) {
-          data.specs.service_life_hours = value.replace(/[^\d.]/g, '');
-        }
-        if (label.toLowerCase().includes('interval')) {
-          const miles = value.replace(/[^\d.]/g, '');
-          if (miles) {
-            data.specs.change_interval_km = Math.round(parseFloat(miles) * 1.60934).toString();
-          }
-        }
-        if (label.toLowerCase().includes('micron')) {
-          data.specs.micron_rating = value.replace(/[^\d.]/g, '');
-        }
-      }
-    });
-    
-    // Extraer descripción
-    const descSelectors = [
-      '.product-description',
-      '.description',
-      '[itemprop="description"]',
-      'meta[name="description"]',
-      '.product-details'
-    ];
-    
-    for (const selector of descSelectors) {
-      const desc = $(selector).attr('content') || $(selector).text().trim();
-      if (desc && desc.length > 20) {
-        data.description = desc.substring(0, 500);
-        break;
-      }
+        return filterDataModel();
     }
-    
-    console.log(`✅ [FRAM] Datos extraídos: ${data.cross_references.length} refs, ${data.oem_codes.length} OEMs`);
-    
-    return data;
-    
-  } catch (error) {
-    console.error(`❌ [FRAM] Error scraping: ${error.message}`);
-    return {
-      cross_references: [],
-      oem_codes: [],
-      engine_applications: [],
-      equipment_applications: [],
-      specs: {},
-      description: ''
-    };
-  }
 }
 
 /**
  * Función completa: busca + scrape
  */
 async function getFRAMData(oemCode) {
-  console.log(`🚀 [FRAM] Proceso completo: ${oemCode}`);
-  
-  try {
-    // 1. Buscar equivalente
-    const framCode = await searchFRAMEquivalent(oemCode);
+    console.log(`🚀 [FRAM] Proceso completo: ${oemCode}`);
     
-    if (!framCode) {
-      return {
-        found: false,
-        fram_code: null,
-        cross_references: [],
-        oem_codes: [],
-        engine_applications: [],
-        equipment_applications: [],
-        specs: {},
-        description: ''
-      };
+    try {
+        const framCode = await searchFRAMEquivalent(oemCode);
+        
+        if (!framCode) {
+            return filterDataModel();
+        }
+        
+        const productData = await scrapeFRAMProductPage(framCode);
+        
+        return {
+            found: true,
+            fram_code: framCode,
+            ...productData
+        };
+        
+    } catch (error) {
+        console.error(`❌ [FRAM] Error proceso completo: ${error.message}`);
+        return filterDataModel();
     }
-    
-    // 2. Scrape página
-    const productData = await scrapeFRAMProductPage(framCode);
-    
-    // 3. Combinar
-    return {
-      found: true,
-      fram_code: framCode,
-      ...productData
-    };
-    
-  } catch (error) {
-    console.error(`❌ [FRAM] Error proceso completo: ${error.message}`);
-    return {
-      found: false,
-      fram_code: null,
-      cross_references: [],
-      oem_codes: [],
-      engine_applications: [],
-      equipment_applications: [],
-      specs: {},
-      description: ''
-    };
-  }
 }
 
 module.exports = {
-  searchFRAMEquivalent,
-  scrapeFRAMProductPage,
-  getFRAMData
+    searchFRAMEquivalent,
+    scrapeFRAMProductPage,
+    getFRAMData
 };
