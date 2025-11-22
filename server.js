@@ -250,3 +250,5 @@ async function startServer() { // <-- FUNCIÓN ASÍNCRONA AÑADIDA
 }
 
 startServer(); // <-- LLAMADA PARA INICIAR
+
+
