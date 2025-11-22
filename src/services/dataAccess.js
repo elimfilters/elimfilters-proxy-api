@@ -3,20 +3,19 @@
 // ============================================================================
 
 const sheets = require("./googleSheetsConnector");
-// El siguiente módulo ya no se importa, ya que causaba el fallo crítico:
+// SE ELIMINA LA LÍNEA DE HOMOLOGATIONDB PARA CORREGIR EL ERROR:
 // const homologationDB = require("./homologationDB"); 
 
 let FilterModel;
 try {
-    // Intenta cargar desde el camino lógico (asumiendo ./models/Filter)
-    FilterModel = require('./models/Filter'); 
+    // Intenta cargar si el archivo Filter.js está en la raíz
+    FilterModel = require('./Filter'); 
 } catch (e) {
     try {
-        // Intenta cargar si el archivo Filter.js está en el directorio raíz
-        FilterModel = require('./Filter'); 
+        // Intenta cargar desde la carpeta models/ (ruta que teníamos inicialmente)
+        FilterModel = require('./models/Filter'); 
     } catch (e2) {
         console.error("❌ ERROR CRÍTICO DE CARGA DE MODELO:", e.message, e2.message);
-        // Si el modelo falla, asigna un placeholder para evitar un fallo de inicio
         FilterModel = null; 
     }
 }
