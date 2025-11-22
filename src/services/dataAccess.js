@@ -1,12 +1,25 @@
 // ============================================================================
-// ELIMFILTERS — DATA ACCESS v4.5 (CORRECCIÓN DE FALLO CRÍTICO)
-// Acceso centralizado a los datos del Sheet Master y equivalencias.
+// ELIMFILTERS — DATA ACCESS v4.6 (FIX FINAL DE RUTA DE MODELO)
 // ============================================================================
 
 const sheets = require("./googleSheetsConnector");
-// const homologationDB = require("./homologationDB"); // <-- LÍNEA ELIMINADA: Corrige el error "Cannot find module"
-const FilterModel = require('./models/Filter'); 
-// NOTA: Si su archivo de modelo (Filter.js) está en la raíz, use require('./Filter').
+// El siguiente módulo ya no se importa, ya que causaba el fallo crítico:
+// const homologationDB = require("./homologationDB"); 
+
+let FilterModel;
+try {
+    // Intenta cargar desde el camino lógico (asumiendo ./models/Filter)
+    FilterModel = require('./models/Filter'); 
+} catch (e) {
+    try {
+        // Intenta cargar si el archivo Filter.js está en el directorio raíz
+        FilterModel = require('./Filter'); 
+    } catch (e2) {
+        console.error("❌ ERROR CRÍTICO DE CARGA DE MODELO:", e.message, e2.message);
+        // Si el modelo falla, asigna un placeholder para evitar un fallo de inicio
+        FilterModel = null; 
+    }
+}
 
 
 /**
@@ -30,29 +43,29 @@ async function queryMasterDatabase(normalized) {
             }
         }
         
-        // Nivel 2: Buscar en la caché de MongoDB 
-        const mongoDoc = await FilterModel.findOne({
-            $or: [
-                { primary_reference: normalized },
-                { 'cross_references.part_number': normalized }
-            ]
-        }).lean(); 
+        // Nivel 2: Buscar en la caché de MongoDB (Solo si el modelo se cargó)
+        if (FilterModel) {
+            const mongoDoc = await FilterModel.findOne({
+                $or: [
+                    { primary_reference: normalized },
+                    { 'cross_references.part_number': normalized }
+                ]
+            }).lean(); 
 
-        if (mongoDoc) {
-             console.log(`[DB] ✓ Código encontrado en caché de MongoDB.`);
-             
-             // Mapeo del documento de Mongo al formato rawData esperado
-             return {
-                 rawData: {
-                     priority_reference: mongoDoc.primary_reference,
-                     duty_level: mongoDoc.duty_level,
-                     filter_family: mongoDoc.filter_type, 
-                     specs: mongoDoc.specs,
-                     cross_reference: mongoDoc.cross_references,
-                     equipment_applications: mongoDoc.equipment_applications,
-                 },
-                 source: 'MONGO_CACHE' 
-             };
+            if (mongoDoc) {
+                console.log(`[DB] ✓ Código encontrado en caché de MongoDB.`);
+                return {
+                    rawData: {
+                        priority_reference: mongoDoc.primary_reference,
+                        duty_level: mongoDoc.duty_level,
+                        filter_family: mongoDoc.filter_type, 
+                        specs: mongoDoc.specs,
+                        cross_reference: mongoDoc.cross_references,
+                        equipment_applications: mongoDoc.equipment_applications,
+                    },
+                    source: 'MONGO_CACHE' 
+                };
+            }
         }
 
         return null; 
@@ -67,8 +80,8 @@ async function queryMasterDatabase(normalized) {
  * [AÑADIDA] Guarda los datos recién scrapeados en MongoDB (Caché).
  */
 async function saveScrapedData(scrapedData) {
-    if (!scrapedData || !scrapedData.rawData) {
-        console.log("⚠️ No hay datos válidos para guardar.");
+    if (!scrapedData || !scrapedData.rawData || !FilterModel) {
+        console.log("⚠️ No hay datos válidos para guardar o el modelo de DB no cargó.");
         return null;
     }
     
@@ -118,20 +131,11 @@ async function saveScrapedData(scrapedData) {
 
 
 /**
- * Funciones originales del archivo (simplemente retornan null/array vacío para evitar el error de módulo faltante)
+ * Funciones originales del archivo (placeholders)
  */
-
-async function queryBySKU(sku) { 
-    return null;
-}
-
-function loadMultiEquivalences() { 
-    return {};
-} 
-
-async function loadOEMandCross(queryNorm) {
-    return { oem: [], cross: [] };
-} 
+async function queryBySKU(sku) { return null; }
+function loadMultiEquivalences() { return {}; } 
+async function loadOEMandCross(queryNorm) { return { oem: [], cross: [] }; } 
 
 
 module.exports = {
