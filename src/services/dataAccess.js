@@ -3,16 +3,16 @@
 // ============================================================================
 
 const sheets = require("./googleSheetsConnector");
-// SE ELIMINA LA LÍNEA DE HOMOLOGATIONDB PARA CORREGIR EL ERROR:
+// Se eliminan todas las líneas de importación de módulos internos fallidos:
 // const homologationDB = require("./homologationDB"); 
 
 let FilterModel;
 try {
-    // Intenta cargar si el archivo Filter.js está en la raíz
+    // Intenta cargar si el archivo Filter.js está en la raíz (ruta más simple)
     FilterModel = require('./Filter'); 
 } catch (e) {
     try {
-        // Intenta cargar desde la carpeta models/ (ruta que teníamos inicialmente)
+        // Intenta cargar si está en la ruta models/ (ruta estructurada)
         FilterModel = require('./models/Filter'); 
     } catch (e2) {
         console.error("❌ ERROR CRÍTICO DE CARGA DE MODELO:", e.message, e2.message);
@@ -23,26 +23,22 @@ try {
 
 /**
  * [ACTUALIZADA] Consulta principal a la base de datos maestra (3 niveles de búsqueda: Sheets -> Mongo).
- * @param {string} normalized Código normalizado.
- * @returns {object} { rawData: {...}, source: 'MASTER_DB' | 'MONGO_CACHE' }
+ * Lógica para MongoDB y Sheets.
  */
 async function queryMasterDatabase(normalized) {
     if (!normalized) return null;
 
     try {
-        // Nivel 1: Buscar en Google Sheets (Fuente Primaria)
+        // Nivel 1: Buscar en Google Sheets
         const instance = sheets.getInstance();
         if (instance) {
             const sheetRow = await instance.findRowByQuery(normalized);
             if (sheetRow && sheetRow.found) {
-                return {
-                    rawData: sheetRow,
-                    source: 'MASTER_DB'
-                };
+                return { rawData: sheetRow, source: 'MASTER_DB' };
             }
         }
         
-        // Nivel 2: Buscar en la caché de MongoDB (Solo si el modelo se cargó)
+        // Nivel 2: Buscar en la caché de MongoDB
         if (FilterModel) {
             const mongoDoc = await FilterModel.findOne({
                 $or: [
@@ -77,6 +73,7 @@ async function queryMasterDatabase(normalized) {
 
 /**
  * [AÑADIDA] Guarda los datos recién scrapeados en MongoDB (Caché).
+ * Lógica para guardar.
  */
 async function saveScrapedData(scrapedData) {
     if (!scrapedData || !scrapedData.rawData || !FilterModel) {
@@ -87,7 +84,7 @@ async function saveScrapedData(scrapedData) {
     const isDonaldson = scrapedData.source === 'DONALDSON_SCRAPER';
     const primaryCode = scrapedData.rawData.priority_reference;
 
-    // Mapeamos los datos del scraper al Mongoose Schema
+    // Mapeo al Schema de Mongoose
     const dataToSave = {
         primary_reference: primaryCode,
         duty_level: scrapedData.rawData.duty_level,
@@ -129,9 +126,7 @@ async function saveScrapedData(scrapedData) {
 }
 
 
-/**
- * Funciones originales del archivo (placeholders)
- */
+// Funciones originales del archivo para exportación
 async function queryBySKU(sku) { return null; }
 function loadMultiEquivalences() { return {}; } 
 async function loadOEMandCross(queryNorm) { return { oem: [], cross: [] }; } 
