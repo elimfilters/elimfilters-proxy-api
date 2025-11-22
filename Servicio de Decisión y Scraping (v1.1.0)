@@ -1,0 +1,108 @@
+const { getDonaldsonData } = require('./donaldsonScraper');
+const { getFRAMData } = require('./framScraper');
+const dataAccess = require('./dataAccess'); // Importa la capa de persistencia
+
+/**
+ * Determina si un código es de Servicio Pesado (HD) o Ligero (LD).
+ * Basado en la lógica de prefijos definida previamente (P55xxxx, CAT, PH, CA, etc.).
+ * @param {string} code Código de filtro de entrada.
+ * @returns {string} 'HD', 'LD' o 'UNKNOWN'.
+ */
+function determineDutyLevel(code) {
+    const hdPrefixes = ['CAT', 'CUM', 'DETROIT', 'P55', '1R', 'LF', 'AF', 'FF', 'BF', 'PA'];
+    const ldPrefixes = ['PH', 'CA', 'CH', 'FS', 'CS', 'WIX', 'FL', 'MO']; 
+
+    const codeUpper = code.toUpperCase();
+    
+    // Si el código es un P-code de Donaldson (P55xxxx) es HD.
+    if (codeUpper.startsWith('P') && codeUpper.length === 7 && !isNaN(parseInt(codeUpper.substring(1)))) {
+        return 'HD';
+    }
+
+    // Revisar prefijos conocidos
+    for (const prefix of hdPrefixes) {
+        if (codeUpper.startsWith(prefix)) return 'HD';
+    }
+    for (const prefix of ldPrefixes) {
+        if (codeUpper.startsWith(prefix)) return 'LD';
+    }
+
+    // Fallback: Asumir LD si no hay una fuerte indicación de HD
+    return 'LD';
+}
+
+/**
+ * NODO 3.5: Ejecuta el scraper apropiado basado en el nivel de servicio.
+ * Si tiene éxito, guarda el resultado en MongoDB (caché) y lo devuelve.
+ * @param {string} code El código normalizado de entrada.
+ * @returns {Promise<object>} Los datos extraídos y guardados, en formato de respuesta para el NODO 4/5.
+ */
+async function scrapeAndSaveNewFilter(code) {
+    const dutyLevel = determineDutyLevel(code);
+    let scraperResult = { found: false };
+
+    console.log(`[NODO 3.5] Nivel de servicio detectado: ${dutyLevel}`);
+
+    try {
+        // 1. Ejecutar el scraper correcto
+        if (dutyLevel === 'HD') {
+            scraperResult = await getDonaldsonData(code);
+            scraperResult.source = 'DONALDSON_SCRAPER';
+        } else {
+            scraperResult = await getFRAMData(code);
+            scraperResult.source = 'FRAM_SCRAPER';
+        }
+
+        if (scraperResult.found) {
+            console.log(`[NODO 3.5] ✓ Datos extraídos. Guardando en caché...`);
+
+            // 2. Mapear datos a la estructura esperada por dataAccess.saveScrapedData
+            const mappedResult = {
+                // El primary_reference es el código del fabricante scraper (ej. P551808 o PH3614)
+                priority_reference: scraperResult.fram_code || scraperResult.donaldson_code,
+                duty_level: dutyLevel,
+                // Usamos 'type' o 'product_type' para determinar la familia del filtro (Lube, Fuel, Air)
+                filter_family: scraperResult.attributes.type || scraperResult.attributes.product_type || 'UNKNOWN',
+                specs: scraperResult.attributes,
+                cross_reference: scraperResult.cross_references,
+                // Si el scraper no devuelve 'oem_codes' como array, lo construimos desde el primary_oem_code
+                oem_codes: scraperResult.oem_codes || [scraperResult.attributes.primary_oem_code], 
+                equipment_applications: scraperResult.equipment_applications
+            };
+            
+            // 3. Persistencia de datos en MongoDB
+            const saveResult = await dataAccess.saveScrapedData({
+                rawData: mappedResult,
+                source: scraperResult.source
+            });
+
+            // 4. Devolver resultado para continuar el flujo (NODO 4: Generación de SKU)
+            if (saveResult) {
+                return saveResult;
+            } else {
+                 throw new Error(`Error al guardar los datos scrapeados para ${code}.`);
+            }
+
+        } else {
+            throw new Error(`Código ${code} no encontrado después del scraping.`);
+        }
+    } catch (error) {
+        console.error(`[NODO 3.5] ❌ Error en el proceso de scraping/guardado: ${error.message}`);
+        // Se lanza el error 404 para ser capturado por filterProcessor.js
+        throw {
+            status: 404,
+            safeErrorResponse: {
+                results: [{
+                    query_norm: code,
+                    error: "SCRAPE_FAILED_OR_NOT_FOUND",
+                    message: `Código no encontrado después de consultar BD y Scrapeo.`,
+                    ok: false
+                }]
+            }
+        };
+    }
+}
+
+module.exports = {
+    scrapeAndSaveNewFilter
+};
