@@ -14,7 +14,7 @@ const { google } = require("googleapis");
 const SPREADSHEET_ID = process.env.GOOGLE_SHEETS_SPREADSHEET_ID || "1ZYI5c0enkuvWAveu8HMaCUk1cek_VDrX8GtgKW7VP6U";
 
 // Rangos de sheets
-const MASTER_RANGE = "MASTER!A:AZ";
+const MASTER_RANGE = "Master!A:AZ";
 const UNKNOWN_RANGE = "UNKNOWN!A:C";
 
 // ============================================================================
