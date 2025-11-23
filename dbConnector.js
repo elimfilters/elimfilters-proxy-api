@@ -12,16 +12,20 @@ async function connectDB() {
     }
 
     try {
-        await mongoose.connect(mongoUri, {
-            // Opciones recomendadas para evitar advertencias de depreciación
-            // (pueden variar según la versión de Mongoose)
-        });
+        // Opciones para una conexión estable y evitar advertencias
+        const options = {
+            useNewUrlParser: true,
+            useUnifiedTopology: true,
+            serverSelectionTimeoutMS: 5000, // Tiempo de espera para seleccionar un servidor
+            socketTimeoutMS: 45000, // Cierra los sockets después de 45s de inactividad
+        };
+
+        await mongoose.connect(mongoUri, options);
         
         console.log('✅ MongoDB: Conexión establecida exitosamente.');
     } catch (error) {
         console.error('❌ MongoDB: Fallo al conectar a la base de datos.', error.message);
-        // Si la conexión falla, se puede optar por detener la aplicación
-        // process.exit(1); 
+        // Si la conexión falla, se lanza el error para que el servidor se detenga
         throw error;
     }
 }
