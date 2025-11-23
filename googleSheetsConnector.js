@@ -1,5 +1,5 @@
 // ============================================================================
-// GOOGLE SHEETS CONNECTOR v2.2 — BÚSQUEDA RÁPIDA Y EFICIENTE
+// GOOGLE SHEETS CONNECTOR v2.4 — MÉTODO SIMPLE Y ROBUSTO
 // ============================================================================
 const { google } = require("googleapis");
 
@@ -41,7 +41,7 @@ const auth = getAuth();
 const sheetsClient = google.sheets({ version: "v4", auth });
 
 // ============================================================================
-// BÚSQUEDA RÁPIDA (NUEVA FUNCIÓN EFICIENTE)
+// FUNCIÓN DE BÚSQUEDA (SIMPLE Y ROBUSTA)
 // ============================================================================
 async function findExactCode(code) {
   if (!auth || !sheetsClient) {
@@ -50,38 +50,52 @@ async function findExactCode(code) {
   }
 
   const codeUpper = code.toUpperCase().trim();
-  console.log(`🔍 [Sheets] Buscando código (búsqueda rápida): ${codeUpper}`);
+  console.log(`🔍 [Sheets] Buscando código (método simple): ${codeUpper}`);
 
   try {
-    // Usar el filtro de la API de Google Sheets para una búsqueda ultra rápida
-    // Busca en las columnas 'sku', 'oem_code' y 'query_norm'
+    // 1. Pedir TODOS los datos de la hoja (más lento pero más seguro)
     const response = await sheetsClient.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
-      range: `${MASTER_RANGE}?filter=(sku='${codeUpper}' or oem_code='${codeUpper}' or query_norm='${codeUpper}')`,
+      range: MASTER_RANGE
     });
 
-    const rows = response.data.values;
-    if (rows && rows.length > 0) {
-      console.log(`✅ [Sheets] Encontrado ${rows.length} coincidencias rápidas.`);
-      
-      // Tomar la primera coincidencia
-      const headerRow = rows[0];
-      const firstMatch = rows[0];
-      
-      const rowObject = {};
-      headerRow.forEach((header, index) => {
-        rowObject[header] = firstMatch[index] || "";
-      });
-      
-      // Mapear al formato estándar
-      return mapSheetToStandard(rowObject);
+    const [header, ...rows] = response.data.values || [];
+    if (!header || rows.length === 0) {
+      console.log('⚠️ [Sheets] Hoja vacía o sin encabezados.');
+      return null;
     }
 
-    console.log(`⚠️ [Sheets] Código no encontrado con búsqueda rápida.`);
+    // 2. Crear un objeto para cada fila para facilitar la búsqueda
+    const dataObjects = rows.map(row => {
+      const obj = {};
+      header.forEach((h, i) => {
+        obj[h] = row[i] || "";
+      });
+      return obj;
+    });
+
+    // 3. Buscar en los campos importantes
+    const found = dataObjects.find(r => {
+      if (r.sku && r.sku.toUpperCase() === codeUpper) return true;
+      if (r.oem_code && r.oem_code.toUpperCase() === codeUpper) return true;
+      if (r.query_norm && r.query_norm.toUpperCase() === codeUpper) return true;
+      if (r.cross_reference) {
+        const crossRefs = r.cross_reference.split(',').map(s => s.trim().toUpperCase());
+        if (crossRefs.includes(codeUpper)) return true;
+      }
+      return false;
+    });
+
+    if (found) {
+      console.log(`✅ [Sheets] Fila encontrada para ${codeUpper}.`);
+      return mapSheetToStandard(found);
+    }
+
+    console.log(`⚠️ [Sheets] Código ${codeUpper} no encontrado.`);
     return null;
 
   } catch (err) {
-    console.error(`❌ [Sheets] Error en findExactCode (búsqueda rápida):`, err.message);
+    console.error(`❌ [Sheets] Error en findExactCode (método simple):`, err.message);
     return null;
   }
 }
@@ -91,9 +105,8 @@ async function findExactCode(code) {
 // ============================================================================
 function mapSheetToStandard(sheetRow) {
   const specs = {};
-  // (Puedes mantener toda la lógica de mapeo que ya tenías)
   if (sheetRow.height_mm) specs.height_mm = sheetRow.height_mm;
-  // ... añadir todas las demás especificaciones aquí
+  // ... (copia toda la función mapSheetToStandard que ya tenías)
   if (sheetRow.filter_type) specs.filter_type = sheetRow.filter_type;
   if (sheetRow.duty) specs.duty = sheetRow.duty;
   
@@ -106,6 +119,7 @@ function mapSheetToStandard(sheetRow) {
     query_norm: sheetRow.query_norm || '',
     source: 'google_sheets',
     cross_reference: sheetRow.cross_reference || '',
+    oem_codes: sheetRow.oem_code || '',
     engine_applications: sheetRow.engine_applications || '',
     equipment_applications: sheetRow.equipment_applications || '',
     specs: specs,
@@ -134,4 +148,4 @@ module.exports = {
   readAllRows
 };
 
-console.log('✅ Google Sheets Connector v2.2 (Búsqueda Rápida) cargado');
+console.log('✅ Google Sheets Connector v2.4 (Método Simple) cargado');
