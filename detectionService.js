@@ -118,26 +118,26 @@ async function detectFilter(queryRaw, sheetsInstance = null) {
     }
 
     // ========================================================================
-    // Nivel 4: NO ENCONTRADO (MENSAJE CORREGIDO)
+    // Nivel 4: NO ENCONTRADO (MENSAJE EN INGLÉS)
     // ========================================================================
     console.log('⚠️ [5/5] Código no encontrado en ninguna fuente verificable.');
     return {
         status: 'UNKNOWN',
-        message: 'El código que ingreso es incorrecto', // <-- MENSAJE CAMBIADO
+        message: 'The code you entered is incorrect', // <-- MENSAJE CAMBIADO A INGLÉS
         query_norm: query,
         sku: 'UNKNOWN',
         filter_type: 'UNKNOWN',
         duty: 'UNKNOWN',
         oem_code: query,
         source: 'none',
-        description: `El código ${query} que ingreso es incorrecto.`, // <-- DESCRIPCIÓN CAMBIADA
+        description: `The code ${query} you entered is incorrect.`, // <-- DESCRIPCIÓN CAMBIADA A INGLÉS
     };
 
   } catch (error) {
     // Este es el catch final. Si llegamos aquí, es un error grave.
     console.error(`❌ [DIAG] ERROR CRÍTICO EN DETECCIÓN:`, error.message);
     console.error(error); // Imprime el objeto de error completo
-    return { status: 'ERROR', message: 'Error interno del servidor.', query_norm: queryRaw };
+    return { status: 'ERROR', message: 'Internal server error.', query_norm: queryRaw }; // También cambié este a inglés
   } finally {
     console.log(`🔵 ====== FIN DETECCIÓN v4.0.0 ======\n`);
   }
