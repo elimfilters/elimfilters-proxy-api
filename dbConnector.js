@@ -12,20 +12,12 @@ async function connectDB() {
     }
 
     try {
-        // Opciones para una conexión estable y evitar advertencias
-        const options = {
-            useNewUrlParser: true,
-            useUnifiedTopology: true,
-            serverSelectionTimeoutMS: 5000, // Tiempo de espera para seleccionar un servidor
-            socketTimeoutMS: 45000, // Cierra los sockets después de 45s de inactividad
-        };
-
-        await mongoose.connect(mongoUri, options);
+        // Conexión simple sin opciones obsoletas
+        await mongoose.connect(mongoUri);
         
         console.log('✅ MongoDB: Conexión establecida exitosamente.');
     } catch (error) {
         console.error('❌ MongoDB: Fallo al conectar a la base de datos.', error.message);
-        // Si la conexión falla, se lanza el error para que el servidor se detenga
         throw error;
     }
 }
