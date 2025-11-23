@@ -118,11 +118,19 @@ async function detectFilter(queryRaw, sheetsInstance = null) {
     }
 
     // ========================================================================
-    // Nivel 4: NO ENCONTRADO
+    // Nivel 4: NO ENCONTRADO (MENSAJE CORREGIDO)
     // ========================================================================
     console.log('⚠️ [5/5] Código no encontrado en ninguna fuente verificable.');
     return {
-        status: 'UNKNOWN', message: 'Filter code not found in database or verified web sources', query_norm: query, sku: 'UNKNOWN', filter_type: 'UNKNOWN', duty: 'UNKNOWN', oem_code: query, source: 'none', description: `El código ${query} no fue encontrado.`
+        status: 'UNKNOWN',
+        message: 'El código que ingreso es incorrecto', // <-- MENSAJE CAMBIADO
+        query_norm: query,
+        sku: 'UNKNOWN',
+        filter_type: 'UNKNOWN',
+        duty: 'UNKNOWN',
+        oem_code: query,
+        source: 'none',
+        description: `El código ${query} que ingreso es incorrecto.`, // <-- DESCRIPCIÓN CAMBIADA
     };
 
   } catch (error) {
