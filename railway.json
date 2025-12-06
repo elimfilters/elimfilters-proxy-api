@@ -1,5 +1,11 @@
-Builder: DOCKERFILE
-Dockerfile Path: Documents/trae_projects/catalogo/repo/Dockerfile
-Start Command: node server.js
-Port: 8080
-Healthcheck: /health
+{
+  "build": {
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "Documents/trae_projects/catalogo/repo/Dockerfile"
+  },
+  "deploy": {
+    "startCommand": "node server.js",
+    "healthcheckPath": "/health",
+    "healthcheckTimeout": 300
+  }
+}
