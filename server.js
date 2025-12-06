@@ -259,3 +259,10 @@ initializeServices().then(() => {
     console.log(`🔍 API endpoint: http://localhost:${PORT}/api/detect-filter`);
   });
 });
+app.get("/health/lt", (req, res) => {
+  return res.status(200).json({
+    status: "OK",
+    forced: true,
+    timestamp: new Date().toISOString()
+  });
+});
